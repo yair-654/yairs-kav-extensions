@@ -1,0 +1,100 @@
+name: Build the bundle
+
+# Builds every extension under extensions/ into one .kavb and publishes it the way
+# the Kav extension guide requires: the latest GitHub Release carries one bundle file.
+#
+#  - Every push to main: builds, verifies, uploads yair-extensions.kavb to the
+#    rolling "latest" release (which Kav checks about every six hours).
+#  - A tag starting with "v" (e.g. v1.1.0): also attaches the bundle to that
+#    release as a versioned copy, beside the rolling "latest".
+#
+# Setup on the runner, per the guide: JDK 17+, Android SDK (android-36 platform +
+# build-tools 36.0.0), and the Kotlin compiler 2.2.10 (the version Kav is built with).
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform + build-tools
+        run: |
+          yes | sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Set up Kotlin 2.2.10
+        run: |
+          curl -fsSL -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.2.10/kotlin-compiler-2.2.10.zip
+          unzip -q /tmp/kotlin.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch Kav's API jar
+        run: |
+          mkdir -p "$RUNNER_TEMP/kav"
+          curl -fsSL -o "$RUNNER_TEMP/kav/kav-api.jar" https://kavapp.link/docs/extensions/kav-api.jar
+
+      - name: Build all extensions into one bundle
+        run: |
+          chmod +x .github/scripts/build-bundle.sh
+          .github/scripts/build-bundle.sh
+
+      - name: Verify the bundle reads as Kav reads it
+        run: |
+          python3 - <<'EOF'
+          import zipfile, json
+          z = zipfile.ZipFile('yair-extensions.kavb')
+          names = z.namelist()
+          assert 'bundle.json' in names, names
+          assert not any(n.startswith('extensions/') for n in names), \
+              "extension folders must sit at the top, not under extensions/"
+          bj = json.loads(z.read('bundle.json'))
+          assert isinstance(bj.get('format'), int) and bj['format'] == 1
+          top = {n.split('/')[0] for n in names} - {'bundle.json'}
+          assert top, 'no extensions found'
+          for d in top:
+              mf = json.loads(z.read(f'{d}/manifest.json'))
+              assert mf['name'] == d, (mf['name'], d)
+              assert mf['native']['dex'] in names, f"{d}/{mf['native']['dex']} missing"
+          print('bundle OK:', sorted(top))
+          EOF
+
+      - name: Attach to the rolling "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          prerelease: false
+          files: yair-extensions.kavb
+
+      - name: Attach to the tagged release (v-tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: yair-extensions.kavb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yair-extensions-kavb
+          path: yair-extensions.kavb

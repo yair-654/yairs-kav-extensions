@@ -13,7 +13,6 @@ updates automatically when the bundle changes.
 | Extension | What it does |
 |---|---|
 | Weather | On a trip's page in Kav, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it. A screen of its own with a place picker for a one-off forecast. |
-| My Trips | Every trip you open in Kav while it is under way is kept on this phone, with no GPS. A My Trips screen, pin-able as a tab, lists trips of the past day, week, month or all time; tapping one shows where you stopped and how long each stop took, the total time of the trip, and a note you can write for it. |
 
 Problems with these extensions go to this repository's issues, not to Kav.
 

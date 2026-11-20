@@ -12,7 +12,7 @@ updates automatically when the bundle changes.
 
 | Extension | What it does |
 |---|---|
-| Route Weather | On a trip's page in Kav, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it. A screen of its own with a place picker for a one-off forecast. |
+| Weather | On a trip's page in Kav, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it. A screen of its own with a place picker for a one-off forecast. |
 
 Problems with these extensions go to this repository's issues, not to Kav.
 

@@ -1,7 +1,7 @@
 {
   "format": 1,
   "name": "route-weather",
-  "displayName": "Route Weather",
+  "displayName": "Weather",
   "version": "1.0.0",
   "release": 1,
   "minKav": 45,
@@ -13,7 +13,7 @@
     { "id": "screens", "capability": "page.provide" }
   ],
   "pages": [
-    { "id": "weather", "title": { "en": "Route Weather", "he": "מזג האוויר בדרך" } }
+    { "id": "weather", "title": { "en": "Weather", "he": "מזג האוויר" } }
   ],
   "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
 }

@@ -1,27 +1,19 @@
-	
-format	1
-name	"route-weather"
-displayName	"Weather"
-version	"1.2.0"
-release	2
-minKav	45
-api	2
-description	"Weather along the route: on a trip's page, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it, with active IMS weather alerts. A weather screen of its own with a place picker."
-native	
-dex	"classes.dex"
-entry	"il.yair.routeweather.RouteWeather"
-contributions	
-0	
-id	"tripcard"
-capability	"slot.trip"
-1	
-id	"screens"
-capability	"page.provide"
-pages	
-0	
-id	"weather"
-title	
-en	"Weather"
-he	"מזג האוויר"
-issues	"https://github.com/yair-654/yairs-kav-extensions/issues"
-format
+{
+  "format": 1,
+  "name": "route-weather",
+  "displayName": "Weather",
+  "version": "1.2.0",
+  "release": 2,
+  "minKav": 45,
+  "api": 2,
+  "description": "Weather along the route: on a trip's page, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it, with active IMS weather alerts. A weather screen of its own with a place picker.",
+  "native": { "dex": "classes.dex", "entry": "il.yair.routeweather.RouteWeather" },
+  "contributions": [
+    { "id": "tripcard", "capability": "slot.trip" },
+    { "id": "screens", "capability": "page.provide" }
+  ],
+  "pages": [
+    { "id": "weather", "title": { "en": "Weather", "he": "מזג האוויר" } }
+  ],
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
+}

@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "name": "route-weather",
+  "displayName": "Route Weather",
+  "version": "1.1.0",
+  "release": 2,
+  "minKav": 45,
+  "api": 2,
+  "description": "Weather along the route: on a trip's page, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it. A weather screen of its own with a place picker.",
+  "native": { "dex": "classes.dex", "entry": "il.yair.routeweather.RouteWeather" },
+  "contributions": [
+    { "id": "tripcard", "capability": "slot.trip" },
+    { "id": "screens", "capability": "page.provide" }
+  ],
+  "pages": [
+    { "id": "weather", "title": { "en": "Route Weather", "he": "מזג האוויר בדרך" } }
+  ],
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
+}

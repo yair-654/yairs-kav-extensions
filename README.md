@@ -21,6 +21,10 @@ Requires Kav 5 or newer.
 |---|---|
 | **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. No location permission used. |
 
+## Credits
+
+- [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
+
 ## Issues and feedback
 
 Found a bug or have a suggestion? Please open an issue:

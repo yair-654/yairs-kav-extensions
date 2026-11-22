@@ -2,18 +2,28 @@
   "format": 1,
   "name": "route-weather",
   "displayName": "Weather",
-  "version": "1.2.0",
-  "release": 2,
+  "version": "1.4.6",
+  "release": 11,
   "minKav": 45,
   "api": 2,
-  "description": "Weather along the route: on a trip's page, a card showing the forecast from the Israel Meteorological Service (ims.gov.il) for every city the route passes through, at the hour you pass it, with active IMS weather alerts. A weather screen of its own with a place picker.",
-  "native": { "dex": "classes.dex", "entry": "il.yair.routeweather.RouteWeather" },
+  "description": "A one-line weather verdict under each search result — the worst condition along the trip, e.g. \"There is a 25% chance of rain during this trip\" — plus a full card on the trip's page showing the IMS (ims.gov.il) forecast for the area around each bus stop on the route, at the hour you pass it. In settings you choose which conditions matter to you, and in what order. No location permission used: forecasts come from the stops of your trip.",
+  "native": {
+    "dex": "classes.dex",
+    "entry": "il.yair.routeweather.RouteWeather"
+  },
+  "adds": [
+    "settings"
+  ],
   "contributions": [
-    { "id": "tripcard", "capability": "slot.trip" },
-    { "id": "screens", "capability": "page.provide" }
+    {
+      "id": "resultsline",
+      "capability": "slot.results"
+    },
+    {
+      "id": "tripcard",
+      "capability": "slot.trip"
+    }
   ],
-  "pages": [
-    { "id": "weather", "title": { "en": "Weather", "he": "מזג האוויר" } }
-  ],
-  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues",
+  "icon": "icon.png"
 }

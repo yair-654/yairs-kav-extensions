@@ -19,12 +19,12 @@ Requires Kav 5 or newer (The Heroes needs Kav 5.1).
 
 | Extension | What it does |
 |---|---|
-| **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. No location permission used. |
+| **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. |
 | **The Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
 
 ## Credits
 
-- [Noam](https://github.com/ImNoammm) — none of this would exist without him. Thank you, Noam, for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
+- None of this would've been possible without [Noam](https://github.com/ImNoammm) Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
 - [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
 
 ## Issues and feedback

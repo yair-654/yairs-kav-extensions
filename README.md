@@ -24,7 +24,7 @@ Requires Kav 5 or newer (The Heroes needs Kav 5.1).
 
 ## Credits
 
-- None of this would've been possible without [Noam](https://github.com/ImNoammm) Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
+- None of this would've been possible without [Noam](https://github.com/ImNoammm). Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
 - [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
 
 ## Issues and feedback

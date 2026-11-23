@@ -23,6 +23,7 @@ Requires Kav 5 or newer.
 
 ## Credits
 
+- [Noam](https://github.com/ImNoammm) — none of this would exist without him. Thank you, Noam, for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
 - [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
 
 ## Issues and feedback

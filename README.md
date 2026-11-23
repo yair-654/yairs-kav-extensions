@@ -13,13 +13,14 @@ Tap the button above, or add the source by hand in Kav:
 Extensions arrive switched off. Turn on the ones you want; each one can be turned
 off or removed at any time from the same screen.
 
-Requires Kav 5 or newer.
+Requires Kav 5 or newer (The Heroes needs Kav 5.1).
 
 ## Extensions
 
 | Extension | What it does |
 |---|---|
 | **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. No location permission used. |
+| **The Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
 
 ## Credits
 

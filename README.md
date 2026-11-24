@@ -27,9 +27,9 @@ Requires Kav 5.1 or newer.
 ## Credits
 
 - None of this would've been possible without [Noam](https://github.com/ImNoammm). Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
-- [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
 - [Hebcal.com](https://www.hebcal.com) — thank you to Hebcal for its free API, which gives Almost Shabbat its candle-lighting and sunset times and the parsha.
 - [Central Bureau of Statistics](https://www.cbs.gov.il) — its list of localities in Israel lets Almost Shabbat find the locality nearest your destination, on your phone.
+- [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
 
 ## Issues and feedback
 

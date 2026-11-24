@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "name": "rush",
+  "displayName": "Rush",
+  "version": "1.0.1",
+  "release": 2,
+  "minKav": 47,
+  "api": 4,
+  "description": "In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop, and during a trip it checks whether running at a change gets you there sooner. It's a gamble: always run safely.",
+  "icon": "icon.png",
+  "native": {
+    "dex": "classes.dex",
+    "entry": "yair.rush.Rush"
+  },
+  "adds": [
+    "notifications",
+    "settings"
+  ],
+  "contributions": [
+    {
+      "id": "button",
+      "capability": "part.results.options"
+    },
+    {
+      "id": "run-line",
+      "capability": "slot.results"
+    },
+    {
+      "id": "trip-run",
+      "capability": "part.trip.walk"
+    },
+    {
+      "id": "nav-run",
+      "capability": "part.nav.card"
+    },
+    {
+      "id": "kav-hooks",
+      "capability": "hooks"
+    }
+  ],
+  "hooks": [
+    {
+      "class": "uk.noammm.kav.data.KavPlan",
+      "method": "plan",
+      "params": [
+        "z3.g",
+        "z3.g",
+        "long",
+        "int",
+        "java.util.List",
+        "boolean",
+        "java.util.List",
+        "java.lang.String",
+        "uk.noammm.kav.data.PlanSettings"
+      ]
+    },
+    {
+      "class": "uk.noammm.kav.ui.NavigateKt",
+      "method": "tripArrival",
+      "params": [
+        "uk.noammm.kav.data.Transit$Itinerary",
+        "uk.noammm.kav.data.Transit$Resolved",
+        "java.util.Map",
+        "uk.noammm.kav.data.Transit$Leg",
+        "uk.noammm.kav.ui.Fix",
+        "long",
+        "z3.g"
+      ]
+    },
+    {
+      "class": "uk.noammm.kav.ui.ReplanKt",
+      "method": "replanned",
+      "params": [
+        "uk.noammm.kav.ActiveJourney",
+        "uk.noammm.kav.ui.ReplanFrom",
+        "java.util.List",
+        "int"
+      ]
+    }
+  ],
+  "reasons": {
+    "hooks": {
+      "en": "To look a few minutes back for buses you can run for, check changes during a trip, and switch your trip when you tap Switch.",
+      "he": "כדי לחפש כמה דקות אחורה אוטובוסים שאפשר לרוץ אליהם, לבדוק החלפות בנסיעה, ולהחליף נסיעה כשמקישים \"החלפה\"."
+    },
+    "parts": {
+      "en": "The Rush mode button under the time and sort, and jogs and runs on a trip's page and in the step-by-step guide.",
+      "he": "כפתור מצב ממהר מתחת לשעה ולמיון, וריצות על עמוד הנסיעה ובהנחיות צעד אחר צעד."
+    },
+    "notifications": {
+      "en": "Only during a trip, when running at a change gets you there sooner, with Run between rides on.",
+      "he": "רק במהלך נסיעה, כשריצה בהחלפה תביא אתכם מוקדם יותר, ורק כשריצה בין נסיעות מופעלת."
+    },
+    "settings": {
+      "en": "Your speeds and choices, kept only on this phone.",
+      "he": "המהירויות וההעדפות שלכם, נשמרות רק בטלפון הזה."
+    },
+    "slot.results": {
+      "en": "A red or amber line on routes where you'd run or jog, with how much time you'd have to spare.",
+      "he": "שורה אדומה או כתומה על מסלולים שבהם תרוצו, עם כמה זמן רזרבה יישאר."
+    }
+  }
+}

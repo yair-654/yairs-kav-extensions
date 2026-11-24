@@ -13,7 +13,7 @@ Tap the button above, or add the source by hand in Kav:
 Extensions arrive switched off. Turn on the ones you want; each one can be turned
 off or removed at any time from the same screen.
 
-Requires Kav 5 or newer (The Heroes needs Kav 5.1).
+Requires Kav 5 or newer (The Heroes and Almost Shabbat need Kav 5.1).
 
 ## Extensions
 
@@ -21,11 +21,14 @@ Requires Kav 5 or newer (The Heroes needs Kav 5.1).
 |---|---|
 | **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. |
 | **The Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
+| **Almost Shabbat** | For trips arriving on the afternoon before Shabbat or a holiday: a line under each search result saying how close you'll arrive to candle lighting (or sunset, your choice), a card on the trip's page with candle lighting, sunset and the parsha, and a notification if a delay brings your arrival closer. Times are for the locality nearest your destination, and only that locality is sent to Hebcal — never your exact destination. |
 
 ## Credits
 
 - None of this would've been possible without [Noam](https://github.com/ImNoammm). Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, and for opening it up to extensions.
 - [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
+- [Hebcal.com](https://www.hebcal.com) — thank you to Hebcal for its free API, which gives Almost Shabbat its candle-lighting and sunset times and the parsha.
+- [Central Bureau of Statistics](https://www.cbs.gov.il) — its list of localities in Israel lets Almost Shabbat find the locality nearest your destination, on your phone.
 
 ## Issues and feedback
 
@@ -40,9 +43,13 @@ These extensions are provided **as is**, without warranty of any kind, express o
 implied, including but not limited to the warranties of merchantability, fitness for
 a particular purpose, and non-infringement.
 
-Forecasts and other data shown by the extensions come from third-party sources
-(the Israel Meteorological Service and others) and may be incomplete, delayed, or
-inaccurate. **Do not rely on them for safety-critical decisions.**
+Forecasts, candle-lighting and sunset times, and other data shown by the extensions come
+from third-party sources (the Israel Meteorological Service, Hebcal.com and others) and
+may be incomplete, delayed, or inaccurate. **Do not rely on them for safety-critical decisions.**
+
+Almost Shabbat's times are calculated for the locality nearest your destination and are
+approximate: customs differ between communities, and arrival times depend on live data
+that can change. If in doubt, ask your local rabbi.
 
 Each extension runs its own Android code inside Kav with the permissions Kav has.
 Installing and enabling these extensions is entirely at your own risk. The developer

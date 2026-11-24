@@ -19,8 +19,8 @@ Requires Kav 5.1 or newer.
 
 | Extension | What it does |
 |---|---|
-| **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. |
-| **The Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
+| **Weather** | The weather on your trip, from the Israel Meteorological Service (ims.gov.il): a one-line summary and any IMS warning under each search result, the forecast at each place you get on, off or walk on the trip's page and map, and the weather now at the top of a stop's departures. You choose which conditions matter, in what order, and your units. Only the nearest forecast place is sent to IMS, never your location or route. |
+| **Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
 | **Almost Shabbat** | For trips arriving on the afternoon before Shabbat or a holiday: a line under each search result saying how close you'll arrive to candle lighting (or sunset, your choice), a card on the trip's page with candle lighting, sunset and the parsha, and a notification if a delay brings your arrival closer. Times are for the locality nearest your destination, and only that locality is sent to Hebcal — never your exact destination. |
 | **Rush** | In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop. A Rush mode button in the results of a "leave now" search puts those routes first, with jogs in amber and runs in red and how much time you'd have to spare, and a note tells you when running would save you at least 10 minutes (you choose how much). During a trip it can also check before each change whether running gets you on an earlier connection, and offer to switch your trip. You set your own jogging and running speeds; everything is kept on your phone. |
 
@@ -47,6 +47,9 @@ a particular purpose, and non-infringement.
 Forecasts, candle-lighting and sunset times, and other data shown by the extensions come
 from third-party sources (the Israel Meteorological Service, Hebcal.com and others) and
 may be incomplete, delayed, or inaccurate. **Do not rely on them for safety-critical decisions.**
+
+Weather shows the forecast for the IMS place nearest each stop, which can be a few kilometres
+away, and IMS warnings only for land areas. For official warnings, check ims.gov.il.
 
 Almost Shabbat's times are calculated for the locality nearest your destination and are
 approximate: customs differ between communities, and arrival times depend on live data

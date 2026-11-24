@@ -13,7 +13,7 @@ Tap the button above, or add the source by hand in Kav:
 Extensions arrive switched off. Turn on the ones you want; each one can be turned
 off or removed at any time from the same screen.
 
-Requires Kav 5 or newer (The Heroes, Almost Shabbat and Rush need Kav 5.1).
+Requires Kav 5.1 or newer.
 
 ## Extensions
 
@@ -22,7 +22,7 @@ Requires Kav 5 or newer (The Heroes, Almost Shabbat and Rush need Kav 5.1).
 | **Weather** | A one-line weather verdict under each search result — the most relevant condition along your trip — plus a full forecast card on the trip's page, built on data from the Israel Meteorological Service (ims.gov.il). You choose which conditions matter to you, and in what order. |
 | **The Heroes** | For IDF soldiers: Kav's Pay buttons can open Zuzu instead, your choger or Tzav 8 opens full screen at full brightness for train security, and optional stay-awake reminders sound every few minutes of a trip. Everything is kept on your phone — no location, no data sent anywhere. |
 | **Almost Shabbat** | For trips arriving on the afternoon before Shabbat or a holiday: a line under each search result saying how close you'll arrive to candle lighting (or sunset, your choice), a card on the trip's page with candle lighting, sunset and the parsha, and a notification if a delay brings your arrival closer. Times are for the locality nearest your destination, and only that locality is sent to Hebcal — never your exact destination. |
-| **Rush** | In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop. A 🏃 Rush mode button in the results of a "leave now" search puts those routes first, with jogs in amber and runs in red and how much time you'd have to spare, and a note tells you when running would save you at least 10 minutes (you choose how much). During a trip it can also check before each change whether running gets you on an earlier connection, and offer to switch your trip. You set your own jogging and running speeds; everything is kept on your phone. |
+| **Rush** | In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop. A Rush mode button in the results of a "leave now" search puts those routes first, with jogs in amber and runs in red and how much time you'd have to spare, and a note tells you when running would save you at least 10 minutes (you choose how much). During a trip it can also check before each change whether running gets you on an earlier connection, and offer to switch your trip. You set your own jogging and running speeds; everything is kept on your phone. |
 
 ## Credits
 

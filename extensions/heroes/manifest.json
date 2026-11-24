@@ -1,9 +1,9 @@
 {
   "format": 1,
   "name": "heroes",
-  "displayName": "The Heroes",
-  "version": "1.0.6",
-  "release": 7,
+  "displayName": "Heroes",
+  "version": "1.0.7",
+  "release": 8,
   "minKav": 47,
   "api": 4,
   "description": "Pay with Zuzu, show your choger or Tzav 8 at train security, and stay-awake reminders during trips.",

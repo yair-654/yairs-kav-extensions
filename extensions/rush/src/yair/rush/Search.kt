@@ -27,8 +27,6 @@ internal class Search(private val kav: Kav, private val bits: KavBits, private v
         /** How long a search with Rush on waits for the Rush answer beyond the normal one. */
         const val WAIT_MS = 25_000L
         const val TIME_DEPARTURE = 2
-        /** Rush mode stays on for the same search this long: past it, a search to the same place is a new search. */
-        const val ON_MS = 10 * 60_000L
         /** At most this many routes with a run go on top: Kav shows only so many routes in its list. */
         const val MOST_RUNS = 3
         /** A run must get there at least this much sooner than the best route without one, or it isn't worth it. */
@@ -64,9 +62,8 @@ internal class Search(private val kav: Kav, private val bits: KavBits, private v
     class Status(val key: String, val phase: Phase, val on: Boolean, val saves: Long = 0, val runs: Int = 0)
 
     @Volatile var status = Status("", Phase.NONE, false); private set
-    /** The search Rush is on for. It goes off by itself with the next search to anywhere else, or after [ON_MS]. */
+    /** The search Rush mode was turned on for. It's used by that one search only: every new search starts with it off. */
     @Volatile var rushOnKey: String? = null
-    @Volatile private var rushOnAt = 0L
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     fun onStatus(l: () -> Unit) { listeners += l }
     private fun setStatus(s: Status) { status = s; for (l in listeners) l() }
@@ -146,8 +143,8 @@ internal class Search(private val kav: Kav, private val bits: KavBits, private v
         val key = keyOf(args[0], args[1])
         // The Rush answer is kept only for this very search: the same ends, modes, stops on the way, planner and settings.
         val cacheKey = key + "|" + listOf(args[4], args[5], args[6], args[7], args[8]).joinToString("|")
-        if (rushOnKey != key || System.currentTimeMillis() - rushOnAt > ON_MS) rushOnKey = null
         val on = rushOnKey == key && store.safetyAccepted
+        rushOnKey = null
         val gen = ++generation
         if (!on && !store.hint) { setStatus(Status(key, Phase.NONE, false)); return }
 
@@ -174,10 +171,11 @@ internal class Search(private val kav: Kav, private val bits: KavBits, private v
             return
         }
 
-        // Rush is off: Kav's answer as it is, and a Rush search beside it for the note.
+        // Rush is off: the row shows it at once, while Kav is still searching, not only once Kav has answered.
+        // Then Kav's answer as it is, and a Rush search beside it for the note.
+        setStatus(Status(key, Phase.CHECKING, false))
         val normal = callOriginal(call, args)
         call.setResult(normal)
-        setStatus(Status(key, Phase.CHECKING, false))
         val from = now()
         Thread({
             val s = try {
@@ -196,7 +194,6 @@ internal class Search(private val kav: Kav, private val bits: KavBits, private v
     fun setRush(on: Boolean) {
         val key = status.key
         rushOnKey = if (on && key.isNotEmpty()) key else null
-        rushOnAt = System.currentTimeMillis()
         generation++
         setStatus(Status(key, Phase.CHECKING, on))
     }

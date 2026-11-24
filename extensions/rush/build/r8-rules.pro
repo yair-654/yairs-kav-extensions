@@ -1,0 +1,4 @@
+-keep class !kotlin.**,!kotlinx.**,!org.intellij.lang.annotations.**,!org.jetbrains.annotations.**,** { *; }
+-repackageclasses 'yair.rush.kotlin'
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
+-dontwarn **

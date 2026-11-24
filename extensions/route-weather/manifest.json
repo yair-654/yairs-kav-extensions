@@ -2,28 +2,74 @@
   "format": 1,
   "name": "route-weather",
   "displayName": "Weather",
-  "version": "1.4.6",
-  "release": 11,
-  "minKav": 45,
-  "api": 2,
-  "description": "A one-line weather verdict under each search result — the worst condition along the trip, e.g. \"There is a 25% chance of rain during this trip\" — plus a full card on the trip's page showing the IMS (ims.gov.il) forecast for the area around each bus stop on the route, at the hour you pass it. In settings you choose which conditions matter to you, and in what order. No location permission used: forecasts come from the stops of your trip.",
+  "version": "1.5.0",
+  "release": 12,
+  "minKav": 47,
+  "api": 4,
+  "description": "The IMS (ims.gov.il) forecast for your trip. Under each search result, one line with the main weather where you'll be outside, e.g. \"Rain expected on this trip · 14–18°, 40% chance of rain\", and any IMS warning. On the trip's page, the forecast at each place you get on, get off or walk, at the time you're there, with the same places on the trip's map. At the top of a stop's departures, the weather there now. You choose which conditions matter and in what order, your units and from what rain chance rain is mentioned. No location permission: forecasts come from the stops of your trip.",
   "native": {
     "dex": "classes.dex",
     "entry": "il.yair.routeweather.RouteWeather"
   },
-  "adds": [
-    "settings"
-  ],
+  "adds": ["settings", "map"],
   "contributions": [
+    { "id": "resultsline", "capability": "slot.results" },
+    { "id": "tripcard", "capability": "slot.trip" },
+    { "id": "stopweather", "capability": "part.stop.board" }
+  ],
+  "settings": [
     {
-      "id": "resultsline",
-      "capability": "slot.results"
+      "key": "temp", "type": "choice", "default": "c",
+      "label": { "en": "Temperature", "he": "טמפרטורה" },
+      "options": [
+        { "value": "c", "label": { "en": "°C", "he": "°C" } },
+        { "value": "f", "label": { "en": "°F", "he": "°F" } }
+      ]
     },
     {
-      "id": "tripcard",
-      "capability": "slot.trip"
+      "key": "wind", "type": "choice", "default": "kmh",
+      "label": { "en": "Wind speed", "he": "מהירות רוח" },
+      "options": [
+        { "value": "kmh", "label": { "en": "km/h", "he": "קמ״ש" } },
+        { "value": "mph", "label": { "en": "mph", "he": "מייל לשעה" } }
+      ]
+    },
+    {
+      "key": "rain", "type": "number", "min": 5, "max": 90, "step": 5, "default": 20,
+      "label": { "en": "Mention rain from", "he": "להזכיר גשם מ־" },
+      "unit": { "en": "%", "he": "%" }
     }
   ],
+  "reasons": {
+    "native": {
+      "en": "It only asks IMS for the forecast of numbered places, never sends your location or your trip",
+      "he": "הוא רק מבקש מהשירות המטאורולוגי תחזית למקומות לפי מספר, ואף פעם לא שולח את המיקום או הנסיעה שלכם"
+    },
+    "slot.results": {
+      "en": "One line: the main weather where you'll be outside, and any IMS warning",
+      "he": "שורה אחת: מזג האוויר העיקרי במקומות שבהם תהיו בחוץ, וכל אזהרה של השירות המטאורולוגי"
+    },
+    "slot.trip": {
+      "en": "The forecast at each place you get on, get off or walk, at the time you're there",
+      "he": "התחזית בכל מקום שבו עולים, יורדים או הולכים, בשעה שתהיו בו"
+    },
+    "parts": {
+      "en": "A weather row at the top of a stop's departures",
+      "he": "שורת מזג אוויר בראש לוח היציאות של תחנה"
+    },
+    "map": {
+      "en": "Weather icons at each place on a trip's map",
+      "he": "סמלי מזג אוויר בכל מקום במפה של נסיעה"
+    },
+    "data": {
+      "en": "Only your units, your rain threshold and the order of conditions",
+      "he": "רק היחידות, סף הגשם וסדר התנאים שבחרתם"
+    },
+    "settings": {
+      "en": "Which conditions to mention, and in what order",
+      "he": "אילו תנאים להזכיר, ובאיזה סדר"
+    }
+  },
   "issues": "https://github.com/yair-654/yairs-kav-extensions/issues",
   "icon": "icon.png"
 }

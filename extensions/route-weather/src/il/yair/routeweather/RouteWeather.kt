@@ -1,153 +1,179 @@
 package il.yair.routeweather
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
-import android.text.format.DateFormat
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import android.util.AtomicFile
+import il.yair.routeweather.IMS.Kind
+import kav.kavapp.api.Kav
+import kav.kavapp.api.KavExtension
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
-import java.util.Collections
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.time.temporal.ChronoUnit
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import org.json.JSONArray
-import org.json.JSONObject
-import kav.kavapp.api.Kav
-import kav.kavapp.api.KavExtension
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * Route Weather — a line under each search result (slot.results) with the worst weather
- * on that trip in one sentence, and a card on the trip's page (slot.trip) showing the
- * Israel Meteorological Service forecast for the area around each bus stop on the route,
- * at the hour the rider passes it. Tap a tile for a detail sheet with feels-like,
- * humidity, wind and UV.
+ * Route Weather: a line under each search result with the trip's main weather, a card on the trip's page with the
+ * IMS forecast at each place the rider is outside (getting on, getting off, walking), weather icons on the trip's
+ * map, and a weather row at the top of each stop's departures.
+ *
+ * Everything slow (the network, Kav's stop data) runs on this class's own threads; views are only touched on the
+ * main thread.
  */
 class RouteWeather : KavExtension {
 
-    private lateinit var kav: Kav
-    private var hebrew = false
-    private val main = Handler(Looper.getMainLooper())
+    lateinit var kav: Kav
+    lateinit var bridge: KavBridge
+    val main = Handler(Looper.getMainLooper())
 
-    private val cities = ConcurrentHashMap<Int, IMS.City>()
-    private val forecastCache = LinkedHashMap<Int, Forecast>()   // lid -> forecast, capped and TTL'd
-    private val codes = ConcurrentHashMap<Int, String>()         // weather code -> description
-    private var codesFetched = false
+    /** Cards' work (one task per card), and fetches (which never wait on each other, so the two pools can't deadlock). */
+    val cardPool: ExecutorService = Executors.newFixedThreadPool(3) { r -> Thread(r, "RouteWeather-card").apply { isDaemon = true } }
+    private val fetchPool: ExecutorService = Executors.newFixedThreadPool(4) { r -> Thread(r, "RouteWeather-fetch").apply { isDaemon = true } }
+    private val saver: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "RouteWeather-save").apply { isDaemon = true } }
 
-    // IMS warnings: region id -> active alert (region r-<rid>)
-    private val alerts = ConcurrentHashMap<Int, Alert>()
-    private var alertsFetchedAt = 0L
-
-    // Settings: which surfaces show weather, which condition kinds are allowed, and
-    // the rider's own worst-to-best order (highest first). Kinds may be switched off.
-    // Immutable snapshot, swapped atomically: card threads and the settings screen
-    // never iterate a collection the other side is changing (that crashed Kav once).
-    @Volatile private var kindConfig: KindConfig = KindConfig.default()
-
-    /** The kinds' order and on/off set, replaced wholesale, never edited in place. */
-    data class KindConfig(val order: List<String>, val enabled: Set<String>) {
-        fun isEnabled(id: String): Boolean = enabled.contains(id)
-        fun rankOf(id: String): Int = order.indexOf(id).let { if (it < 0) Int.MAX_VALUE else it }
-        companion object {
-            fun from(order: List<String>, onOff: Map<String, Boolean>): KindConfig {
-                val o = LinkedHashSet<String>(order)
-                for (k in KIND_ORDER_DEFAULT) o.add(k)          // keep every kind present
-                return KindConfig(ArrayList(o), o.filter { onOff[it] ?: true }.toSet())
-            }
-            fun default(): KindConfig = from(KIND_ORDER_DEFAULT.toList(),
-                KIND_ORDER_DEFAULT.associateWith { true })
-        }
-    }
+    val hebrew: Boolean get() = kav.locale() == "he"
+    fun t(en: String, he: String): String = if (hebrew) he else en
 
     companion object {
-        private const val IMS_BASE = "https://ims.gov.il/%s/full_forecast_data/%d"
-        private const val FORECAST_TTL_MS = 30L * 60 * 1000
-        private const val GAP_MIN_SEC = 30L * 60      // min time between kept stops
-        private const val HOUR_WINDOW_MS = 2L * 60 * 60 * 1000   // nearest hourly block must be within 2 h
-        private const val ALERT_TTL_MS = 10L * 60 * 1000         // warnings feed refresh
-        private const val MAX_STATION_KM = 30.0                 // a stop further than this from every station: no forecast
-        private const val RAIN_CHANCE_LINE_MIN = 20             // "chance of rain" wording needs at least this
-        private const val CACHE_MAX = 40                        // forecasts kept at most (LRU-ish, oldest evicted)
-
-        /** The nine condition kinds, in the extension's own worst-to-best order. */
-        val KIND_ORDER_DEFAULT = arrayOf(
-            "thunderstorm", "rain", "snow", "fog", "heat", "wind", "cloudy", "partly", "sunny")
-    }
-
-    override fun start(kav: Kav) {
-        this.kav = kav
-        this.hebrew = kav.locale() == "he"
-        loadSettings(kav.settings())
-        kav.onSettings { all -> loadSettings(all) }
-        val ui = kav.ui()
-
-        kav.card("results") { context, about ->
-            val trip = JSONObject(about).getJSONObject("trip")
-            ResultsLine(ui, context, trip).view()
-        }
-
-        kav.card("trip") { context, about ->
-            val trip = JSONObject(about).getJSONObject("trip")
-            CardPresenter(ui, context, trip).view()
-        }
-
-        // The rider's own settings view: reordering the ranking, switching kinds off.
-        kav.settingsScreen { context, _ -> SettingsScreen(ui, context).view() }
-
-        kav.log("Route Weather started, API ${kav.apiVersion()}, language ${kav.locale()}")
+        private const val VERSION = "1.5.0"
+        private const val FORECAST_URL = "https://ims.gov.il/en/full_forecast_data/%d"
+        const val FORECAST_TTL_MS = 30L * 60 * 1000           // a forecast is fresh for 30 minutes
+        private const val STALE_MAX_MS = 12L * 60 * 60 * 1000   // offline, an older one is still shown up to 12 hours
+        private const val RETRY_SHORT_MS = 2L * 60 * 1000       // after a failed fetch, wait this long before trying again
+        private const val RETRY_LONG_MS = 10L * 60 * 1000
+        private const val WARNINGS_TTL_MS = 10L * 60 * 1000
+        private const val TRIP_TTL_MS = 5L * 60 * 1000           // a trip's weather is kept this long (results scroll)
+        private const val HOUR_WINDOW_SEC = 2L * 60 * 60         // the nearest hourly block must be within 2 h
+        private const val SAME_PLACE_SEC = 45L * 60              // the same IMS place again within 45 min is one tile
+        private const val MAX_STATION_KM = 30.0
+        private const val MAX_POINTS = 10
+        private const val CACHE_MAX = 40
     }
 
     // ---------------- Settings ----------------
 
-    /** Reads Kav's declared settings into the volatile view state; also validates. */
-    private fun loadSettings(allJson: String?) {
-        // The kind list (order + on/off) is this extension's own data file, kept beside the
-        // settings Kav keeps, saved by our own settings screen. Missing file: defaults.
-        try {
-            val f = File(kav.context().filesDir, "kinds_v2.json")
-            if (f.exists()) {
-                val o = JSONObject(f.readText())
-                val orderArr = JSONArray(o.optString("order", "[]"))
-                val off = o.optJSONArray("off") ?: JSONArray()
-                val order = ArrayList<String>()
-                for (i in 0 until orderArr.length()) order.add(orderArr.getString(i))
-                val onOff = LinkedHashMap<String, Boolean>()
-                for (k in order) onOff[k] = true
-                for (i in 0 until off.length()) onOff[off.getString(i)] = false
-                kindConfig = KindConfig.from(order, onOff)
-            } else kindConfig = KindConfig.default()
-        } catch (e: Exception) { kindConfig = KindConfig.default() }
+    /** The rider's declared settings: units and the rain threshold. Replaced wholesale. */
+    class Units(val celsius: Boolean, val kmh: Boolean, val rainMin: Int)
+
+    @Volatile var units = Units(true, true, 20)
+
+    /** The kinds' order and on/off set, replaced wholesale, never edited in place. */
+    class KindConfig(val order: List<String>, val enabled: Set<String>) {
+        fun isEnabled(id: String): Boolean = id in enabled
+        fun rank(id: String): Int = order.indexOf(id).let { if (it < 0) Int.MAX_VALUE else it }
+
+        companion object {
+            fun default() = KindConfig(IMS.DEFAULT_ORDER, IMS.DEFAULT_ORDER.filter { it !in IMS.DEFAULT_OFF }.toSet())
+
+            /** Cleans a stored order: old ids renamed, unknown dropped, new kinds put right after their default neighbour. */
+            fun from(order: List<String>, off: Set<String>): KindConfig {
+                fun rename(id: String) = if (id == "sunny") "clear" else id
+                val o = ArrayList<String>()
+                for (raw in order) { val id = rename(raw); if (Kind.of(id) != null && id !in o) o.add(id) }
+                for ((i, id) in IMS.DEFAULT_ORDER.withIndex()) {
+                    if (id in o) continue
+                    val before = IMS.DEFAULT_ORDER.subList(0, i).lastOrNull { it in o }
+                    o.add(if (before == null) 0 else o.indexOf(before) + 1, id)
+                }
+                val offIds = off.map { rename(it) }.toSet()
+                return KindConfig(o, o.filter { it !in offIds }.toSet())
+            }
+        }
     }
 
-    /** Persists the rider's kind order and switches as one immutable snapshot. */
-    fun saveKinds(order: List<String>, onOff: Map<String, Boolean>) {
-        kindConfig = KindConfig.from(order, onOff)
+    @Volatile var kinds: KindConfig = KindConfig.default()
+
+    private fun readUnits(json: String?): Units = try {
+        val o = JSONObject(json ?: "{}")
+        Units(o.optString("temp", "c") != "f", o.optString("wind", "kmh") != "mph", o.optInt("rain", 20).coerceIn(0, 100))
+    } catch (e: Exception) {
+        Units(true, true, 20)
+    }
+
+    /** This extension's own file, named by its id so it never meets Kav's files or another extension's. */
+    private fun kindsFile(): AtomicFile {
+        val safe = kav.id().replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return AtomicFile(File(kav.context().filesDir, "ext-$safe-kinds.json"))
+    }
+
+    private fun loadKinds() {
+        try {
+            val f = kindsFile()
+            val old = File(kav.context().filesDir, "kinds_v2.json")   // 1.4.x kept it un-namespaced
+            val text = when {
+                f.baseFile.exists() -> String(f.readFully(), Charsets.UTF_8)
+                old.exists() -> old.readText()
+                else -> null
+            }
+            if (text == null) { kinds = KindConfig.default(); return }
+            val o = JSONObject(text)
+            val orderArr = o.optJSONArray("order") ?: JSONArray(o.optString("order", "[]"))
+            val offArr = o.optJSONArray("off") ?: JSONArray()
+            kinds = KindConfig.from(
+                (0 until orderArr.length()).map { orderArr.getString(it) },
+                (0 until offArr.length()).map { offArr.getString(it) }.toSet())
+            if (old.exists()) { writeKinds(kinds); old.delete() }
+        } catch (e: Exception) {
+            kav.log("could not read the condition order, using the default: $e")
+            kinds = KindConfig.default()
+        }
+    }
+
+    /** Takes the new order at once and writes it on a thread of its own: the settings screen never waits for the disk. */
+    fun saveKinds(cfg: KindConfig) {
+        kinds = cfg
+        synchronized(tripCache) { tripCache.clear() }
+        saver.execute { writeKinds(cfg) }
+    }
+
+    private fun writeKinds(cfg: KindConfig) {
+        val f = kindsFile()
+        val out = try { f.startWrite() } catch (e: Exception) { kav.log("could not save the condition order: $e"); return }
         try {
             val o = JSONObject()
-            o.put("order", JSONArray(kindConfig.order))
-            val off = JSONArray()
-            for (k in kindConfig.order) if (!kindConfig.isEnabled(k)) off.put(k)
-            o.put("off", off)
-            File(kav.context().filesDir, "kinds_v2.json").writeText(o.toString())
+            o.put("order", JSONArray(cfg.order))
+            o.put("off", JSONArray(cfg.order.filter { !cfg.isEnabled(it) }))
+            out.write(o.toString().toByteArray(Charsets.UTF_8))
+            f.finishWrite(out)
         } catch (e: Exception) {
-            kav.log("could not save kinds: $e")
+            f.failWrite(out)
+            kav.log("could not save the condition order: $e")
         }
+    }
+
+    // ---------------- Start ----------------
+
+    override fun start(kav: Kav) {
+        this.kav = kav
+        bridge = KavBridge(kav)
+        units = readUnits(kav.settings())
+        kav.onSettings { all -> units = readUnits(all) }
+        loadKinds()
+
+        kav.card("results") { c, about -> ResultsLine(this, c, JSONObject(about).getJSONObject("trip")).view() }
+        kav.card("trip") { c, about -> TripCard(this, c, JSONObject(about).getJSONObject("trip")).view() }
+        kav.part("stop.board", "before") { c, about -> StopRow(this, c, JSONObject(about)).view() }
+        kav.settingsScreen { c, _ -> SettingsScreen(this, c).view() }
+        kav.map().onTap { id, c -> mapItems[id]?.let { Detail(this).show(it, c) } }
+
+        // Load the IMS place list now, so the first search's lines don't all race to fetch it.
+        fetchPool.execute { ensureCities() }
+        kav.log("Route Weather $VERSION started, API ${kav.apiVersion()}, language ${kav.locale()}")
     }
 
     // ---------------- Networking ----------------
@@ -159,1038 +185,493 @@ class RouteWeather : KavExtension {
             conn.connectTimeout = 8000
             conn.readTimeout = 15000
             conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("User-Agent", "RouteWeatherKavExt/1.0 (Kav extension)")
+            conn.setRequestProperty("User-Agent", "RouteWeatherKavExt/$VERSION (Kav extension)")
             if (conn.responseCode != 200) return null
-            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { br ->
-                val sb = StringBuilder()
-                var line: String?
-                while (br.readLine().also { line = it } != null) sb.append(line).append('\n')
-                sb.toString()
-            }
+            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
         } catch (e: Exception) {
             null
         } finally {
-            try { conn?.disconnect() } catch (e: Exception) {}
+            try { conn?.disconnect() } catch (e: Exception) { }
         }
     }
 
-    private fun fetchForecast(lid: Int): Forecast? {
-        synchronized(forecastCache) {
-            val cached = forecastCache[lid]
-            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < FORECAST_TTL_MS) return cached
-        }
-        val lang = if (hebrew) "he" else "en"
-        val body = httpGet(String.format(Locale.US, IMS_BASE, lang, lid)) ?: return null
-        val f = IMS.parseForecast(body, lid) ?: return null
-        synchronized(forecastCache) {
-            if (forecastCache.size >= CACHE_MAX) {           // evict the oldest entries first
-                val excess = forecastCache.size - CACHE_MAX + 1
-                val it = forecastCache.entries.iterator()
-                var removed = 0
-                while (removed < excess && it.hasNext()) { it.next(); it.remove(); removed++ }
-            }
-            forecastCache[lid] = f
-        }
-        return f
-    }
+    // ---------------- IMS places ----------------
 
-    private fun weatherDesc(code: Int): String {
-        if (code == 0) return ""
-        codes[code]?.let { return it }
-        if (!codesFetched) {
-            val lang = if (hebrew) "he" else "en"
-            val body = httpGet("https://ims.gov.il/$lang/weather_codes")
-            if (body != null) {
-                try {
-                    val data = JSONObject(body).getJSONObject("data")
-                    val it = data.keys()
-                    while (it.hasNext()) {
-                        val o = data.getJSONObject(it.next())
-                        val desc = (if (hebrew) o.optString("desc") else o.optString("desc_en")).trim()
-                        val id = o.optInt("weather_code")
-                        if (id != 0 && desc.isNotEmpty()) codes[id] = desc
-                    }
-                    codesFetched = true
-                } catch (e: Exception) {}
-            }
-        }
-        return codes[code] ?: ""
-    }
-
-    // ---------------- Cities ----------------
-
-    private fun ensureCities() {
-        if (cities.isNotEmpty()) return
-        val body = httpGet("https://ims.gov.il/" + (if (hebrew) "he" else "en") + "/locations_info") ?: return
-        try {
-            val data = JSONObject(body).getJSONObject("data")
-            val it = data.keys()
-            while (it.hasNext()) {
-                val o = data.getJSONObject(it.next())
-                val lid = o.optInt("lid")
-                val lat = o.optDouble("lat", Double.NaN)
-                val lon = o.optDouble("lon", Double.NaN)
-                val name = o.optString("name")
-                if (lid != 0 && !lat.isNaN() && !lon.isNaN() && name.isNotEmpty()) {
-                    val seaRidStr = o.optString("sea_rid")
-                    cities[lid] = IMS.City(lid, name, lat, lon,
-                        o.optString("rid").toIntOrNull(),
-                        if (seaRidStr.isEmpty() || seaRidStr == "null") null else seaRidStr.toIntOrNull())
-                }
-            }
-        } catch (e: Exception) {}
-        if (cities.isEmpty()) cities.putAll(IMS.builtinLocations(hebrew))
-    }
+    private val cityLock = Any()
+    @Volatile private var cities: Map<Int, IMS.City> = emptyMap()
+    @Volatile private var citiesFull = false
+    private var citiesTriedAt = 0L
 
     /**
-     * The nearest IMS station to a point by great-circle (Haversine) distance, or null
-     * when every station is further than MAX_STATION_KM. There is no fallback city: a
-     * point with no nearby station simply has no forecast, rather than being assigned
-     * the weather of an unrelated place.
+     * IMS's place list, fetched once in both languages. Only one thread fetches; the others wait for it, so nobody
+     * reads a half-filled list (that race is what left some result lines empty). Offline, the built-in list is used and
+     * the full one is tried again after 10 minutes.
      */
-    private fun nearestCity(lat: Double, lon: Double): IMS.City? {
-        ensureCities()
+    fun ensureCities(): Map<Int, IMS.City> {
+        if (citiesFull) return cities
+        synchronized(cityLock) {
+            if (citiesFull) return cities
+            val now = System.currentTimeMillis()
+            if (cities.isNotEmpty() && now - citiesTriedAt < RETRY_LONG_MS) return cities
+            citiesTriedAt = now
+            val enBody = httpGet("https://ims.gov.il/en/locations_info")
+            val heBody = httpGet("https://ims.gov.il/he/locations_info")
+            val en = enBody?.let { IMS.parseLocations(it) }
+            val he = heBody?.let { IMS.parseLocations(it) }
+            val base = en?.takeIf { it.isNotEmpty() } ?: he?.takeIf { it.isNotEmpty() }
+            if (base != null) {
+                val regions = IMS.parseRegions(enBody ?: heBody ?: "")
+                val m = HashMap<Int, IMS.City>()
+                for ((lid, p) in base) {
+                    m[lid] = IMS.City(lid, en?.get(lid)?.first ?: "", he?.get(lid)?.first ?: "", p.second, p.third, regions[lid])
+                }
+                cities = m
+                citiesFull = en != null && he != null
+            } else {
+                if (cities.isEmpty()) cities = IMS.builtinLocations()
+                kav.log("IMS place list unreachable: using the ${cities.size} built-in places for now")
+            }
+            return cities
+        }
+    }
+
+    /** The nearest IMS place by great-circle distance, or null when every place is further than MAX_STATION_KM. */
+    fun nearestCity(lat: Double, lon: Double): IMS.City? {
         var best: IMS.City? = null
         var bestKm = Double.MAX_VALUE
         val la = Math.toRadians(lat)
-        for ((_, c) in cities) {
+        for ((_, c) in ensureCities()) {
             val ca = Math.toRadians(c.lat)
             val dLa = ca - la
             val dLo = Math.toRadians(c.lon - lon)
-            val h = Math.sin(dLa / 2) * Math.sin(dLa / 2) +
-                    Math.cos(la) * Math.cos(ca) * Math.sin(dLo / 2) * Math.sin(dLo / 2)
+            val h = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(la) * Math.cos(ca) * Math.sin(dLo / 2) * Math.sin(dLo / 2)
             val km = 2 * 6371.0 * Math.asin(Math.sqrt(h))
             if (km < bestKm) { bestKm = km; best = c }
         }
         return if (bestKm <= MAX_STATION_KM) best else null
     }
 
-    // ---------------- Route stops ----------------
+    // ---------------- Forecasts ----------------
 
-    fun pickRouteStops(trip: JSONObject): List<RouteStop> {
+    private val forecasts = object : LinkedHashMap<Int, IMS.Forecast>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, IMS.Forecast>?): Boolean = size > CACHE_MAX
+    }
+    private val lidLocks = ConcurrentHashMap<Int, Any>()
+    private val forecastFailedAt = ConcurrentHashMap<Int, Long>()
+
+    /**
+     * A place's forecast: fresh (30 min), else fetched; when IMS can't be reached, the last one up to 12 hours old.
+     * One fetch per place at a time: a second card asking for the same place waits for the first and gets its answer.
+     */
+    fun forecast(lid: Int): IMS.Forecast? {
+        synchronized(lidLocks.getOrPut(lid) { Any() }) {
+            val now = System.currentTimeMillis()
+            val cached = synchronized(forecasts) { forecasts[lid] }
+            if (cached != null && now - cached.fetchedAt < FORECAST_TTL_MS) return cached
+            val failed = forecastFailedAt[lid]
+            if (failed == null || now - failed > RETRY_SHORT_MS) {
+                val f = httpGet(String.format(Locale.US, FORECAST_URL, lid))?.let { IMS.parseForecast(it, lid) }
+                if (f != null) {
+                    synchronized(forecasts) { forecasts[lid] = f }
+                    forecastFailedAt.remove(lid)
+                    return f
+                }
+                forecastFailedAt[lid] = now
+            }
+            return cached?.takeIf { now - it.fetchedAt < STALE_MAX_MS }
+        }
+    }
+
+    // ---------------- Weather codes ----------------
+
+    private val codesLock = Any()
+    @Volatile private var codes: Map<Int, Pair<String, String>> = emptyMap()   // code -> (Hebrew, English)
+    private var codesTriedAt = 0L
+
+    /** A weather code's description, (Hebrew, English). One fetch gives both; a failed one is retried after 10 minutes. */
+    fun codeDesc(code: Int): Pair<String, String> {
+        if (code == 0) return Pair("", "")
+        codes[code]?.let { return it }
+        synchronized(codesLock) {
+            codes[code]?.let { return it }
+            val now = System.currentTimeMillis()
+            if (codes.isEmpty() && now - codesTriedAt > RETRY_LONG_MS) {
+                codesTriedAt = now
+                try {
+                    val data = JSONObject(httpGet("https://ims.gov.il/en/weather_codes") ?: "").getJSONObject("data")
+                    val m = HashMap<Int, Pair<String, String>>()
+                    val it = data.keys()
+                    while (it.hasNext()) {
+                        val o = data.optJSONObject(it.next()) ?: continue
+                        val id = o.optString("weather_code").toIntOrNull() ?: continue
+                        m[id] = Pair(o.optString("desc").trim(), o.optString("desc_en").trim())
+                    }
+                    if (m.isNotEmpty()) codes = m
+                } catch (e: Exception) { }
+            }
+        }
+        return codes[code] ?: Pair("", "")
+    }
+
+    // ---------------- IMS warnings ----------------
+
+    private val warnLock = Any()
+    @Volatile private var warnings: List<IMS.Warning> = emptyList()
+    @Volatile private var warningsAt = 0L
+    @Volatile private var warningsLang = ""
+    private var warningsTriedAt = 0L
+    private var loggedSample = false
+
+    /** IMS's warnings, refreshed every 10 minutes; a failed fetch waits 2 minutes, instead of being retried on every stop. */
+    private fun currentWarnings(): List<IMS.Warning> {
+        val lang = if (hebrew) "he" else "en"
+        val now = System.currentTimeMillis()
+        if (lang == warningsLang && now - warningsAt < WARNINGS_TTL_MS) return warnings
+        synchronized(warnLock) {
+            if (lang == warningsLang && now - warningsAt < WARNINGS_TTL_MS) return warnings
+            if (lang == warningsLang && now - warningsTriedAt < RETRY_SHORT_MS) return warnings
+            warningsTriedAt = now
+            val body = httpGet("https://ims.gov.il/$lang/warnings") ?: return warnings
+            val parsed = IMS.parseWarnings(body)
+            if (parsed == null) {
+                kav.log("IMS warnings feed not readable: ${body.take(300)}")
+                return warnings
+            }
+            if (parsed.isNotEmpty() && !loggedSample) {
+                // The feed's shape with warnings in it isn't documented: keep one sample in the log to check against.
+                loggedSample = true
+                kav.log("IMS warnings sample (${parsed.size} warnings): ${body.take(3000)}")
+            }
+            for (w in parsed) if (w.regions.isEmpty()) kav.log("IMS warning with no region, not shown: ${w.title.ifEmpty { w.text }.take(80)}")
+            warnings = parsed
+            warningsAt = now
+            warningsLang = lang
+            return parsed
+        }
+    }
+
+    /**
+     * The most severe IMS warning for a place's land region that holds at that time. Sea regions are never used:
+     * "dangerous sea for swimming" doesn't concern a bus stop. Severity: a higher severity_id is taken as more severe.
+     */
+    fun warningFor(city: IMS.City, atSec: Long): IMS.Warning? {
+        val rid = city.rid ?: return null
+        return currentWarnings().filter { rid in it.regions && it.holdsAt(atSec) }.maxByOrNull { it.severity }
+    }
+
+    // ---------------- The places on a trip ----------------
+
+    /** One place the rider is outside at: the nearest IMS place (null: none nearby), the stop's name, when (seconds). */
+    class RoutePoint(val city: IMS.City?, val stopName: String, val time: Long, val lat: Double, val lon: Double)
+
+    /** A JSON field as text, with JSON null, "null" and "" all meaning none (optString turns null into "null"). */
+    private fun str(o: JSONObject, key: String): String? =
+        if (o.isNull(key)) null else o.optString(key).trim().takeIf { it.isNotEmpty() && it != "null" }
+
+    /**
+     * The places the rider is outside: where each walk starts and ends, each stop they wait at (from when they get
+     * there), and each stop they get off at. Never the middle of a ride. A start or end with no name (a saved place,
+     * the rider's location) takes the name of the nearest named stop on the trip. The same IMS place again within
+     * 45 minutes is one tile.
+     */
+    fun routePoints(trip: JSONObject): List<RoutePoint> {
         val legs = trip.optJSONArray("legs") ?: return emptyList()
-        val stops = ArrayList<Triple<IMS.City?, String, Long>>()   // station (null: none nearby), stop name, time
+        class Raw(val lat: Double, val lon: Double, var name: String?, val t: Long)
+        val raw = ArrayList<Raw>()
+        fun add(p: JSONObject?, t: Long) {
+            if (p == null || t <= 0) return
+            val lat = p.optDouble("lat", 0.0)
+            val lon = p.optDouble("lon", 0.0)
+            if (lat == 0.0 && lon == 0.0) return
+            raw.add(Raw(lat, lon, str(p, "name"), t))
+        }
         for (i in 0 until legs.length()) {
             val leg = legs.optJSONObject(i) ?: continue
-            if (leg.optString("kind") != "ride" && leg.optString("kind") != "walk") continue
             val dep = leg.optLong("dep", 0)
             val arr = leg.optLong("arr", 0)
-            for (end in listOf("from", "to")) {
-                val p = leg.optJSONObject(end) ?: continue
-                val lat = p.optDouble("lat", 0.0)
-                val lon = p.optDouble("lon", 0.0)
-                val t = if (end == "from") dep else arr
-                val nm = p.optString("name")
-                if (t <= 0) continue
-                // A missing name is not a refusal: name it by what it is, and fall
-                // back to the route's first named stop when nothing else is known.
-                val name = nm.ifEmpty { (if (end == "from")
-                    (if (hebrew) "נקודת המוצא" else "origin point")
-                else (if (hebrew) "נקודת היעד" else "destination point")) }
-                if (lat == 0.0 && lon == 0.0) continue
-                stops.add(Triple(nearestCity(lat, lon), name, t))
-            }
-        }
-        // The origin/destination fallback text needs a real place when coordinates exist:
-        // use the route's first named stop's station as the label for unnamed ends.
-        val fallbackCity = stops.firstOrNull { it.first != null }?.first
-        val out0 = ArrayList<Triple<IMS.City?, String, Long>>()
-        for ((city, name, t) in stops) {
-            var nm2 = name
-            if (name.contains("point") || name.contains("מוצא") || name.contains("יעד")) {
-                val real = fallbackCity?.name
-                if (real != null) nm2 = real
-            }
-            out0.add(Triple(city, nm2, t))
-        }
-        val sorted = out0.sortedBy { it.third }
-        // Collapse: keep the first stop, then a next one only when at least 30 minutes passed.
-        val out = ArrayList<RouteStop>()
-        var lastT = Long.MIN_VALUE
-        for ((city, name, t) in sorted) {
-            if (out.isEmpty() || t - lastT >= GAP_MIN_SEC) {
-                out.add(RouteStop(city, name, t))
-                lastT = t
-            }
-        }
-        return out
-    }
-
-    // ---------------- Weather for a stop ----------------
-
-    private fun weatherFor(stop: RouteStop): Weather {
-        val alert = stop.city?.let { alertFor(it, stop.time) }
-        if (stop.city == null)
-            return Weather(-1, stop.name, Weather.Status.NO_STATION, stopName = stop.name, atSec = stop.time, alert = alert)
-        val f = fetchForecast(stop.city.lid)
-            ?: return Weather(stop.city.lid, stop.city.name, Weather.Status.NETWORK, stopName = stop.name, atSec = stop.time, alert = alert)
-        val inIsrael = IMS.israelEpochMatches(stop.time)
-        val key = IMS.dayKey(stop.time * 1000)
-        val dayData = f.days[key]
-            ?: return Weather(stop.city.lid, stop.city.name, Weather.Status.EMPTY, stopName = stop.name, atSec = stop.time, alert = alert)
-        val hourly = dayData.optJSONObject("hourly")
-
-        // The hour block closest to the time the rider is actually there.
-        var bestHour: JSONObject? = null
-        var bestGap = Long.MAX_VALUE
-        if (hourly != null) {
-            val it = hourly.keys()
-            while (it.hasNext()) {
-                val h = hourly.optJSONObject(it.next()) ?: continue
-                val ft = IMS.parseStamp(h.optString("forecast_time")) ?: continue
-                val gap = Math.abs(ft - stop.time * 1000)
-                if (gap < bestGap) { bestGap = gap; bestHour = h }
-            }
-        }
-        if (bestHour == null)
-            return Weather(stop.city.lid, stop.city.name, Weather.Status.EMPTY, stopName = stop.name, atSec = stop.time, alert = alert)
-        val h = bestHour!!
-        return if (bestGap <= HOUR_WINDOW_MS) hourlyWeather(stop, h, inIsrael, alert)
-        else dailyFallback(stop, dayData.optJSONObject("daily"), inIsrael, alert)
-    }
-
-    private fun hourlyWeather(stop: RouteStop, h: JSONObject, inIsrael: Boolean, alert: Alert?): Weather {
-        val code = h.optInt("weather_code")
-        val city = stop.city!!
-        return Weather(
-            lid = city.lid, cityName = city.name, status = Weather.Status.OK,
-            stopName = stop.name,
-            temp = h.optString("temperature"), desc = weatherDesc(code),
-            alert = alert,
-            rainChance = h.optInt("rain_chance", -1).let { if (it < 0) null else it },
-            atSec = stop.time, atText = hourLabel(h.optString("hour"), inIsrael),
-            detail = h, israelTime = inIsrael,
-            feelsLike = h.optString("heat_stress", "").ifEmpty { h.optString("wind_chill", "") },
-            humidity = h.optString("relative_humidity"),
-            windSpeed = h.optString("wind_speed"), windDirId = h.optInt("wind_direction_id", -1),
-            gustSpeed = h.optString("gust_speed"), uvIndex = h.optString("u_v_index"),
-            code = code
-        )
-    }
-
-    private fun dailyFallback(stop: RouteStop, daily: JSONObject?, inIsrael: Boolean, alert: Alert?): Weather {
-        val city = stop.city!!
-        if (daily == null) return Weather(city.lid, city.name, Weather.Status.EMPTY, stopName = stop.name, atSec = stop.time, alert = alert)
-        val code = daily.optInt("weather_code")
-        return Weather(
-            lid = city.lid, cityName = city.name, status = Weather.Status.OK,
-            stopName = stop.name,
-            temp = daily.optString("minimum_temperature", "") + "–" + daily.optString("maximum_temperature", ""),
-            desc = weatherDesc(code), rainChance = null,
-            atSec = stop.time, atText = null, summary = true, israelTime = inIsrael,
-            code = code, uvMax = daily.optString("maximum_uvi"), alert = alert
-        )
-    }
-
-    /** The hour the rider passes the place, formatted by the phone's clock setting (12/24 h). */
-    private fun hourLabel(hourField: String, israel: Boolean): String {
-        val c = kav.context()
-        return try {
-            val v = hourField.toInt()
-            if (DateFormat.is24HourFormat(c)) String.format(Locale.US, "%02d:00", v)
-            else {
-                val ampm = if (v < 12) "AM" else "PM"
-                var h = v % 12; if (h == 0) h = 12
-                "$h:00 $ampm"
-            }
-        } catch (e: Exception) { "" }
-    }
-
-    /** The day of a stop, in the rider's language ("Today", "Tomorrow") over Israel-time day keys. */
-    private fun dayLabel(stopSec: Long): String? {
-        val todayKey = IMS.dayKey(System.currentTimeMillis())
-        val stopDay = IMS.dayKey(stopSec * 1000)
-        val tomorrowKey = IMS.dayKey(System.currentTimeMillis() + 86_400_000L)
-        return when {
-            stopDay == todayKey -> if (hebrew) "היום" else "Today"
-            stopDay == tomorrowKey -> if (hebrew) "מחר" else "Tomorrow"
-            else -> null
-        }
-    }
-
-    // ---------------- IMS weather alerts ----------------
-
-    /** Fetches IMS's public warnings feed (ims.gov.il/<lang>/warnings) every 10 minutes. */
-    private fun ensureAlerts() {
-        if (System.currentTimeMillis() - alertsFetchedAt < ALERT_TTL_MS) return
-        val lang = if (hebrew) "he" else "en"
-        val body = httpGet("https://ims.gov.il/$lang/warnings") ?: return
-        try {
-            val full = JSONObject(body).getJSONObject("data").getJSONObject("full_warnings_data")
-            val nowSec = System.currentTimeMillis() / 1000
-            val fresh = ConcurrentHashMap<Int, Alert>()
-            val it = full.keys()
-            while (it.hasNext()) {
-                val regionKey = it.next()                       // "r-54", "r-55", ...
-                if (!regionKey.startsWith("r-")) continue
-                val regionId = regionKey.substring(2).toIntOrNull() ?: continue
-                val days = full.optJSONObject(regionKey) ?: continue
-                val dit = days.keys()
-                while (dit.hasNext()) {
-                    val warns = days.optJSONObject(dit.next()) ?: continue
-                    val wit = warns.keys()
-                    while (wit.hasNext()) {
-                        val w = warns.optJSONObject(wit.next()) ?: continue
-                        val to = (w.optLong("valid_from_unix", 0) + 0L)   // keep epoch start
-                        val from = w.optLong("valid_from_unix", 0)
-                        val toSecAlt = IMS.parseStamp(w.optString("valid_to"))?.div(1000) ?: Long.MAX_VALUE
-                        if (from > 0 && nowSec > toSecAlt) continue      // expired
-                        fresh[regionId] = Alert(
-                            regionId = regionId,
-                            severity = w.optInt("severity_id", 3),
-                            fromSec = from,
-                            toSec = toSecAlt,
-                            titleHe = trimAlertText(w.optString("full_he")),
-                            titleEn = trimAlertText(w.optString("full_en")),
-                            bodyHe = w.optString("full_he"),
-                            bodyEn = w.optString("full_en")
-                        )
-                    }
+            when (leg.optString("kind")) {
+                "walk", "bike" -> { add(leg.optJSONObject("from"), dep); add(leg.optJSONObject("to"), arr) }
+                "wait" -> add(leg.optJSONObject("from"), dep)
+                "ride" -> {
+                    val waited = i > 0 && legs.optJSONObject(i - 1)?.optString("kind") == "wait"
+                    if (!waited) add(leg.optJSONObject("from"), dep)
+                    add(leg.optJSONObject("to"), arr)
                 }
             }
-            alerts.clear()
-            alerts.putAll(fresh)
-            alertsFetchedAt = System.currentTimeMillis()
-        } catch (e: Exception) {}
-    }
-
-    /** IMS alert texts come with padding/newlines; trims to a clean single-line snippet. */
-    private fun trimAlertText(s: String): String =
-        s.trim().replace("\\s+".toRegex(), " ")
-
-    /** The strongest active alert for a city, by its land and sea warning regions. Null when none. */
-    private fun alertFor(city: IMS.City, atSec: Long): Alert? {
-        ensureAlerts()
-        var best: Alert? = null
-        for (rid in listOfNotNull(city.rid, city.seaRid)) {
-            val a = alerts[rid] ?: continue
-            if (atSec in a.fromSec until a.toSec || a.toSec == Long.MAX_VALUE) {
-                if (best == null || a.severity < best!!.severity) best = a
-            }
         }
-        return best
-    }
-
-    /** IMS severity: 1 red, 2 orange, 3 yellow — else gray. */
-    private fun alertColor(sev: Int): Int = when (sev) {
-        1 -> 0xFFE53935.toInt()
-        2 -> 0xFFFB8C00.toInt()
-        3 -> 0xFFFDD835.toInt()
-        else -> 0xFF9E9E9E.toInt()
-    }
-
-    // ---------------- Trip verdict (worst leg, one sentence) ----------------
-
-    /** One leg's condition in one phrase ("Rain"), used in lists and spoken labels. */
-    private fun conditionSentence(w: Weather): String {
-        return when (conditionKind(w)) {
-            ConditionKind.THUNDERSTORM -> if (hebrew) "סופת רעמים" else "A thunderstorm"
-            ConditionKind.RAIN -> if (hebrew) "גשם" else "Rain"
-            ConditionKind.SNOW -> if (hebrew) "שלג" else "Snow"
-            ConditionKind.FOG -> if (hebrew) "ערפל" else "Fog"
-            ConditionKind.HEAT -> if (hebrew) "חם" else "Heat"
-            ConditionKind.WIND -> if (hebrew) "רוח חזקה" else "Strong wind"
-            ConditionKind.CLOUDY -> if (hebrew) "מעונן" else "Cloudy"
-            ConditionKind.PARTLY -> if (hebrew) "מעונן חלקית" else "Partly cloudy"
-            ConditionKind.SUNNY -> if (hebrew) "שמש" else "Sunny"
+        val sorted = raw.sortedBy { it.t }
+        for ((i, r) in sorted.withIndex()) {
+            if (r.name != null) continue
+            r.name = sorted.drop(i + 1).firstOrNull { it.name != null }?.name ?: sorted.take(i).lastOrNull { it.name != null }?.name
         }
+        val out = ArrayList<RoutePoint>()
+        for (r in sorted) {
+            val city = nearestCity(r.lat, r.lon)
+            val last = out.lastOrNull()
+            val samePlace = last != null && (if (city != null) last.city?.lid == city.lid else last.city == null && last.stopName == (r.name ?: ""))
+            if (samePlace && r.t - last!!.time < SAME_PLACE_SEC) continue
+            out.add(RoutePoint(city, r.name ?: "", r.t, r.lat, r.lon))
+        }
+        return out.take(MAX_POINTS)
+    }
+
+    // ---------------- Weather at a place ----------------
+
+    class Weather(
+        val point: RoutePoint,
+        val status: Status,
+        val city: IMS.City?,
+        val code: Int = 0,
+        val descHe: String = "",
+        val descEn: String = "",
+        val tempC: Double? = null,
+        val minC: Double? = null,
+        val maxC: Double? = null,
+        val rainChance: Int? = null,
+        val feelsC: Double? = null,
+        val humidity: Int? = null,
+        val windKmh: Double? = null,
+        val windDir: Int = -1,
+        val gustKmh: Double? = null,
+        val uv: String = "",
+        val uvMax: String = "",
+        val forecastAt: Long? = null,   // the hourly block's time (seconds); null for a day forecast
+        val night: Boolean = false,
+        val fetchedAt: Long = 0,
+        val warning: IMS.Warning? = null
+    ) {
+        enum class Status { OK, NETWORK, TOO_FAR, NO_STATION }
+        val daily: Boolean get() = status == Status.OK && forecastAt == null
+    }
+
+    private fun num(o: JSONObject, key: String): Double? =
+        if (o.isNull(key)) null else o.optString(key).trim().toDoubleOrNull()
+
+    /** The weather at a place and time: the nearest hourly block within 2 hours, else that day's forecast. */
+    fun weatherFor(p: RoutePoint): Weather {
+        val city = p.city ?: return Weather(p, Weather.Status.NO_STATION, null)
+        val warning = warningFor(city, p.time)
+        val f = forecast(city.lid) ?: return Weather(p, Weather.Status.NETWORK, city, warning = warning)
+        val night = IMS.isNight(city.lat, city.lon, p.time)
+        f.nearestHour(p.time, HOUR_WINDOW_SEC)?.let { (at, h) -> return fromHour(p, city, at, h, night, f.fetchedAt, warning) }
+        val day = f.days[IMS.dayKey(p.time * 1000)]?.optJSONObject("daily")
+            ?: return Weather(p, Weather.Status.TOO_FAR, city, warning = warning, fetchedAt = f.fetchedAt)
+        val code = day.optString("weather_code").toIntOrNull() ?: 0
+        val d = codeDesc(code)
+        return Weather(p, Weather.Status.OK, city, code = code, descHe = d.first, descEn = d.second,
+            minC = num(day, "minimum_temperature"), maxC = num(day, "maximum_temperature"),
+            uvMax = str(day, "maximum_uvi") ?: "", night = night, fetchedAt = f.fetchedAt, warning = warning)
+    }
+
+    fun fromHour(p: RoutePoint, city: IMS.City, at: Long, h: JSONObject, night: Boolean, fetchedAt: Long, warning: IMS.Warning?): Weather {
+        val code = h.optString("weather_code").toIntOrNull() ?: 0
+        val d = codeDesc(code)
+        // "Feels like" from heat_stress or wind_chill, only when it reads as a temperature.
+        val feels = (num(h, "heat_stress") ?: num(h, "wind_chill"))?.takeIf { it in -30.0..60.0 }
+        return Weather(p, Weather.Status.OK, city, code = code, descHe = d.first, descEn = d.second,
+            tempC = num(h, "temperature"),
+            rainChance = num(h, "rain_chance")?.toInt()?.takeIf { it >= 0 },
+            feelsC = feels,
+            humidity = num(h, "relative_humidity")?.toInt(),
+            windKmh = num(h, "wind_speed"), windDir = h.optString("wind_direction_id").toIntOrNull() ?: -1,
+            gustKmh = num(h, "gust_speed"), uv = str(h, "u_v_index") ?: "",
+            forecastAt = at, night = night, fetchedAt = fetchedAt, warning = warning)
+    }
+
+    // ---------------- A trip's weather, cached ----------------
+
+    private val tripCache = object : LinkedHashMap<String, Pair<Long, List<Weather>>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, List<Weather>>>?): Boolean = size > 60
+    }
+
+    private fun tripKey(trip: JSONObject): String {
+        val legs = trip.optJSONArray("legs") ?: return ""
+        val sb = StringBuilder()
+        for (i in 0 until legs.length()) {
+            val l = legs.optJSONObject(i) ?: continue
+            sb.append(l.optString("kind")).append(l.optLong("dep")).append('-').append(l.optLong("arr"))
+            l.optJSONObject("to")?.let { sb.append('@').append(it.optDouble("lat")).append(',').append(it.optDouble("lon")) }
+            sb.append(';')
+        }
+        return sb.toString()
     }
 
     /**
-     * The trip's one-line verdict: the weather of the worst leg, ranked by the rider's
-     * own order (his settings screen), counting only the kinds he left switched on.
-     * A sentence pattern shared by all: "There will be a thunderstorm during this trip."
-     * When every kind is switched off, or no leg has a forecast, there is no line at
-     * all — never an empty value.
+     * Every place's weather for a trip. The places' forecasts are fetched side by side, and the answer is kept for
+     * 5 minutes, so scrolling the results doesn't fetch again. Runs on a card thread.
      */
-    private fun tripVerdict(items: List<Weather>): String {
+    fun tripWeather(trip: JSONObject): List<Weather> {
+        val key = tripKey(trip)
+        val now = System.currentTimeMillis()
+        synchronized(tripCache) { tripCache[key]?.let { if (now - it.first < TRIP_TTL_MS) return it.second } }
+        val points = routePoints(trip)
+        val lids = points.mapNotNull { it.city?.lid }.distinct()
+        if (lids.size > 1) {
+            val jobs = lids.map { lid -> fetchPool.submit<IMS.Forecast?> { forecast(lid) } }
+            for (j in jobs) try { j.get(40, TimeUnit.SECONDS) } catch (e: Exception) { }
+        }
+        val items = points.map { weatherFor(it) }
+        if (items.none { it.status == Weather.Status.NETWORK }) synchronized(tripCache) { tripCache[key] = Pair(now, items) }
+        return items
+    }
+
+    // ---------------- Kinds and wording ----------------
+
+    /** A place's kind for the verdict: "possible rain" under the rider's rain threshold isn't rain. */
+    fun kindOf(w: Weather): Kind {
+        val k = IMS.kindOf(w.code, w.descEn)
+        val chance = w.rainChance
+        if (k == Kind.RAIN && chance != null && chance < units.rainMin && IMS.isPossibleRain(w.code, w.descEn))
+            return if (w.code == 1530) Kind.PARTLY else Kind.CLOUDY
+        return k
+    }
+
+    fun kindLabel(k: Kind): String = when (k) {
+        Kind.THUNDERSTORM -> t("Thunderstorm", "סופת רעמים")
+        Kind.SNOW -> t("Snow", "שלג")
+        Kind.RAIN -> t("Rain", "גשם")
+        Kind.HEAT -> t("Heat", "חום")
+        Kind.DUST -> t("Dust", "אובך")
+        Kind.WIND -> t("Strong wind", "רוח חזקה")
+        Kind.FOG -> t("Fog", "ערפל")
+        Kind.CLOUDY -> t("Cloudy", "מעונן")
+        Kind.PARTLY -> t("Partly cloudy", "מעונן חלקית")
+        Kind.CLEAR -> t("Clear", "בהיר")
+    }
+
+    /** IMS's own words for the weather, or the kind's name when IMS gave none. */
+    fun desc(w: Weather): String = (if (hebrew) w.descHe else w.descEn).ifEmpty { if (hebrew) w.descEn else w.descHe }.ifEmpty { kindLabel(kindOf(w)) }
+
+    private fun verdictSentence(k: Kind, night: Boolean): String = when (k) {
+        Kind.THUNDERSTORM -> t("Thunderstorms expected on this trip", "צפויות סופות רעמים בנסיעה")
+        Kind.SNOW -> t("Snow expected on this trip", "צפוי שלג בנסיעה")
+        Kind.RAIN -> t("Rain expected on this trip", "צפוי גשם בנסיעה")
+        Kind.HEAT -> t("Heat expected on this trip", "צפוי חום בנסיעה")
+        Kind.DUST -> t("Dust expected on this trip", "צפוי אובך בנסיעה")
+        Kind.WIND -> t("Strong wind expected on this trip", "צפויות רוחות חזקות בנסיעה")
+        Kind.FOG -> t("Fog expected on this trip", "צפוי ערפל בנסיעה")
+        Kind.CLOUDY -> t("Cloudy skies expected on this trip", "צפויה מעוננות בנסיעה")
+        Kind.PARTLY -> t("Partly cloudy skies expected on this trip", "צפויה מעוננות חלקית בנסיעה")
+        Kind.CLEAR -> if (night) t("Clear skies expected on this trip", "צפויים שמיים בהירים בנסיעה")
+                      else t("Sunny weather expected on this trip", "צפוי מזג אוויר שמשי בנסיעה")
+    }
+
+    fun rainText(chance: Int): String = t("$chance% chance of rain", "$chance% סיכוי לגשם")
+
+    /**
+     * The results line: the worst switched-on kind at the places the rider is outside, by the rider's own order, then
+     * the trip's temperature range, then the highest rain chance when it's at or above the rider's threshold:
+     * "Rain expected on this trip · 14–18°, 40% chance of rain". "" when there's nothing to say.
+     */
+    fun verdict(items: List<Weather>): String {
         val oks = items.filter { it.status == Weather.Status.OK }
         if (oks.isEmpty()) return ""
-        val cfg = kindConfig        // one consistent snapshot for the whole computation
-        val order = if (cfg.order.isNotEmpty()) cfg.order else KIND_ORDER_DEFAULT.toList()
-        // Worst = the lowest position in the rider's order among legs whose kind is on.
-        val ranked = oks.filter { cfg.isEnabled(kindId(conditionKind(it))) }
-            .map { Pair(it, order.indexOf(kindId(conditionKind(it)))) }
-            .filter { it.second >= 0 }   // a kind missing from the order: not a candidate
-        if (ranked.isEmpty()) return ""  // every kind switched off: no line, never a crash
-        val worst = ranked.minBy { it.second }.first
-        val line = when (conditionKind(worst)) {
-            ConditionKind.THUNDERSTORM -> if (hebrew) "צפויה סופת רעמים בנסיעה זו" else "There will be a thunderstorm during this trip"
-            ConditionKind.RAIN -> if (hebrew) "יהיו גשמים בנסיעה זו" else "It will be rainy during this trip"
-            ConditionKind.SNOW -> if (hebrew) "יהיה שלג בנסיעה זו" else "It will be snowy during this trip"
-            ConditionKind.FOG -> if (hebrew) "יהיה ערפל בנסיעה זו" else "It will be foggy during this trip"
-            ConditionKind.HEAT -> if (hebrew) "יהיה חם בנסיעה זו" else "It will be hot during this trip"
-            ConditionKind.WIND -> if (hebrew) "יהיו רוחות חזקות בנסיעה זו" else "It will be windy during this trip"
-            ConditionKind.CLOUDY -> if (hebrew) "יהיה מעונן בנסיעה זו" else "It will be cloudy during this trip"
-            ConditionKind.PARTLY -> if (hebrew) "יהיה בהיר חלקית בנסיעה זו" else "It will be partly cloudy during this trip"
-            ConditionKind.SUNNY -> if (hebrew) "יהיה שמש בנסיעה זו" else "It will be sunny during this trip"
-        }
-        // When rain is the worst thing on the trip and IMS gives a probability for it,
-        // say the percentage in the same sentence pattern.
-        val rc = worst.rainChance?.takeIf { it >= RAIN_CHANCE_LINE_MIN }
-        return if (conditionKind(worst) == ConditionKind.RAIN && rc != null) {
-            if (hebrew) "יש $rc% סיכוי לגשם בנסיעה זו" else "There is a $rc% chance of rain during this trip"
-        } else line
+        val cfg = kinds
+        val worst = oks.mapNotNull { w -> kindOf(w).takeIf { cfg.isEnabled(it.id) }?.let { Pair(w, it) } }
+            .minByOrNull { cfg.rank(it.second.id) } ?: return ""
+        val sb = StringBuilder(verdictSentence(worst.second, worst.first.night))
+        val temps = tempRange(oks)
+        if (temps != null) sb.append(" · ").append(temps)
+        val rain = oks.mapNotNull { it.rainChance }.maxOrNull()
+        if (rain != null && rain >= units.rainMin) sb.append(if (temps != null) ", " else " · ").append(rainText(rain))
+        return sb.toString()
     }
 
-    private fun kindId(kind: ConditionKind): String = when (kind) {
-        ConditionKind.THUNDERSTORM -> "thunderstorm"
-        ConditionKind.RAIN -> "rain"
-        ConditionKind.SNOW -> "snow"
-        ConditionKind.FOG -> "fog"
-        ConditionKind.HEAT -> "heat"
-        ConditionKind.WIND -> "wind"
-        ConditionKind.CLOUDY -> "cloudy"
-        ConditionKind.PARTLY -> "partly"
-        ConditionKind.SUNNY -> "sunny"
+    private fun tempRange(oks: List<Weather>): String? {
+        val all = oks.flatMap { listOfNotNull(it.tempC, it.minC, it.maxC) }.map { tempNum(it) }
+        if (all.isEmpty()) return null
+        val lo = all.minOrNull()!!
+        val hi = all.maxOrNull()!!
+        return if (lo == hi) "$lo°" else "$lo–$hi°"
     }
 
-    private enum class ConditionKind { THUNDERSTORM, RAIN, SNOW, FOG, HEAT, WIND, CLOUDY, PARTLY, SUNNY }
-
-    private fun conditionKind(w: Weather): ConditionKind = when (w.code) {
-        1020 -> ConditionKind.THUNDERSTORM
-        1530, 1540, 1560, 1140 -> ConditionKind.RAIN     // possible/light/rainy — same codes the rain icon uses
-        1080, 1070, 1060, 1520 -> ConditionKind.SNOW
-        1160 -> ConditionKind.FOG
-        1310, 1580 -> ConditionKind.HEAT
-        1260, 1510 -> ConditionKind.WIND
-        1230 -> ConditionKind.CLOUDY
-        1220 -> ConditionKind.PARTLY
-        1250 -> ConditionKind.SUNNY
-        else -> ConditionKind.CLOUDY                            // dust etc: treat as cloudy
+    /** The results line's warning: the most severe one on the trip, what it is and where. Null when none. */
+    fun warningLine(items: List<Weather>): Pair<String, IMS.Warning>? {
+        val found = items.mapNotNull { w -> w.warning?.let { Pair(it, w) } }.distinctBy { it.first.key }
+        if (found.isEmpty()) return null
+        val top = found.maxByOrNull { it.first.severity }!!
+        val place = top.second.city?.name(hebrew) ?: top.second.point.stopName
+        val what = top.first.title.take(60)
+        val sb = StringBuilder(
+            if (what.isEmpty()) t("IMS weather warning in $place", "אזהרת מזג אוויר ב$place")
+            else t("IMS warning: $what in $place", "אזהרת השירות המטאורולוגי: $what ב$place"))
+        if (found.size > 1) sb.append(t(" (+${found.size - 1} more)", " (ועוד ${found.size - 1})"))
+        return Pair(sb.toString(), top.first)
     }
-
-    private fun rankOf(kind: ConditionKind): Int = when (kind) {
-        ConditionKind.THUNDERSTORM -> 0
-        ConditionKind.RAIN -> 1
-        ConditionKind.SNOW -> 1
-        ConditionKind.FOG -> 2
-        ConditionKind.HEAT -> 3
-        ConditionKind.WIND -> 4
-        ConditionKind.CLOUDY -> 5
-        ConditionKind.PARTLY -> 6
-        ConditionKind.SUNNY -> 7
-    }
-
-    private fun conditionRank(w: Weather): Int = rankOf(conditionKind(w))
-
-    /** Maps an IMS weather code to one of a small drawn set: sun, cloud-sun, cloud, rain, storm, snow, fog, heat, wind. */
-    fun iconFor(code: Int): String {
-        return when (code) {
-            1250 -> "sun"                                   // clear
-            1220 -> "cloud_sun"                             // partly cloudy
-            1230 -> "cloud"                                 // cloudy
-            1530, 1540, 1560, 1140 -> "rain"                // possible/light/rainy
-            1020 -> "storm"                                 // thunderstorms
-            1080, 1070, 1060, 1520 -> "snow"                // sleet/light/heavy snow
-            1160 -> "fog"                                   // fog
-            1310, 1580 -> "heat"                            // hot / extremely hot
-            1260, 1510 -> "wind"                            // windy / stormy
-            else -> "cloud"                                 // dust etc: a neutral cloud
-        }
-    }
-
-    private val iconCache = ConcurrentHashMap<String, Bitmap>()
-
-    /** Draws one of the condition icons with Kav's theme colors: blue sky accent, gray clouds. */
-    private fun icon(name: String, sizePx: Int): Bitmap {
-        iconCache["$name-$sizePx"]?.let { return it }
-        val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-        val cv = Canvas(bmp)
-        val d = sizePx / 24f
-        val p = Paint(Paint.ANTI_ALIAS_FLAG)
-
-        val sunCol = 0xFFFDB813.toInt()      // warm amber sun
-        val cloudCol = 0xFF78909C.toInt()     // slate cloud
-        val rainCol = 0xFF4FC3F7.toInt()      // light-blue drops
-        val accent = kav.ui().let { 0xFF6200EA.toInt() }  // unused placeholder, kept for tuning
-
-        when (name) {
-            "sun" -> {
-                p.color = sunCol; cv.drawCircle(12f*d, 12f*d, 5f*d, p)
-                p.strokeWidth = 1.6f*d; p.style = Paint.Style.STROKE
-                for (i in 0..7) {
-                    val a = Math.toRadians(i * 45.0)
-                    cv.drawLine(
-                        (12 + Math.cos(a)*7.5).toFloat()*d, (12 + Math.sin(a)*7.5).toFloat()*d,
-                        (12 + Math.cos(a)*9.8).toFloat()*d, (12 + Math.sin(a)*9.8).toFloat()*d, p)
-                }
-            }
-            "cloud_sun" -> {
-                p.color = sunCol; cv.drawCircle(16f*d, 8.5f*d, 3.4f*d, p)
-                p.color = cloudCol; cv.drawOval(android.graphics.RectF(4f*d, 11f*d, 16f*d, 19f*d), p)
-                p.style = Paint.Style.FILL; cv.drawCircle(9f*d, 10f*d, 4f*d, p); cv.drawCircle(13.5f*d, 10f*d, 3.5f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 12f*d, 18.5f*d, 19f*d), p)
-            }
-            "cloud" -> {
-                p.color = cloudCol; cv.drawCircle(9f*d, 12f*d, 4.5f*d, p); cv.drawCircle(14.5f*d, 12f*d, 3.8f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 13f*d, 20f*d, 19.5f*d), p)
-            }
-            "rain" -> {
-                p.color = cloudCol; cv.drawCircle(9f*d, 10f*d, 4.5f*d, p); cv.drawCircle(14.5f*d, 10f*d, 3.8f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 11f*d, 20f*d, 17f*d), p)
-                p.color = rainCol; p.strokeWidth = 1.8f*d; p.style = Paint.Style.STROKE
-                for (x in listOf(7f, 11f, 15f)) {
-                    cv.drawLine(x*d, 18f*d, x*d - 1.5f*d, 22.5f*d, p)
-                }
-            }
-            "storm" -> {
-                p.color = cloudCol; cv.drawCircle(9f*d, 9.5f*d, 4.5f*d, p); cv.drawCircle(14.5f*d, 9.5f*d, 3.8f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 10.5f*d, 20f*d, 16f*d), p)
-                p.color = 0xFFFFC107.toInt(); p.style = Paint.Style.FILL
-                val bolt = android.graphics.Path()
-                bolt.moveTo(11f*d, 15f*d); bolt.lineTo(8.5f*d, 20f*d); bolt.lineTo(11.5f*d, 19f*d); bolt.lineTo(10f*d, 23.5f*d)
-                bolt.lineTo(15f*d, 17.5f*d); bolt.lineTo(12f*d, 18.5f*d); bolt.lineTo(14f*d, 15f*d)
-                bolt.close(); cv.drawPath(bolt, p)
-            }
-            "snow" -> {
-                p.color = cloudCol; cv.drawCircle(9f*d, 10f*d, 4.5f*d, p); cv.drawCircle(14.5f*d, 10f*d, 3.8f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 11f*d, 20f*d, 17f*d), p)
-                p.color = 0xFF4FC3F7.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 1.4f*d
-                for ((x, y) in listOf(7f to 19.5f, 12f to 21f, 17f to 19.5f)) {
-                    cv.drawLine((x-1.6f)*d, y*d, (x+1.6f)*d, y*d, p)
-                    cv.drawLine(x*d, (y-1.6f)*d, x*d, (y+1.6f)*d, p)
-                }
-            }
-            "fog" -> {
-                // a low cloud with three horizontal mist lines under it
-                p.color = cloudCol; p.style = Paint.Style.FILL
-                cv.drawCircle(9f*d, 8.5f*d, 4.2f*d, p); cv.drawCircle(14.5f*d, 8.5f*d, 3.6f*d, p)
-                cv.drawOval(android.graphics.RectF(4f*d, 9.5f*d, 20f*d, 15f*d), p)
-                p.color = 0xFFB0BEC5.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 1.6f*d
-                for (y in listOf(17.5f, 19.5f, 21.5f)) {
-                    cv.drawLine(6f*d, y*d, 18f*d, y*d, p)
-                }
-            }
-            "heat" -> {
-                p.color = sunCol; cv.drawCircle(9f*d, 12f*d, 4f*d, p)
-                p.color = 0xFFD84315.toInt(); cv.drawCircle(15.5f*d, 12f*d, 4f*d, p)
-                p.color = 0xFFFF5722.toInt(); p.strokeWidth = 2f*d; p.style = Paint.Style.STROKE
-                cv.drawRect(android.graphics.RectF(3f*d, 16f*d, 21f*d, 21f*d), p)
-            }
-            "wind" -> {
-                p.color = 0xFF90A4AE.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 2f*d
-                cv.drawPath(android.graphics.Path().apply {
-                    moveTo(3f*d, 9f*d); quadTo(10f*d, 3f*d, 16f*d, 9f*d)
-                }, p)
-                cv.drawPath(android.graphics.Path().apply {
-                    moveTo(5f*d, 15f*d); quadTo(12f*d, 9f*d, 18f*d, 15f*d)
-                }, p)
-                cv.drawPath(android.graphics.Path().apply {
-                    moveTo(7f*d, 21f*d); quadTo(14f*d, 15f*d, 20f*d, 21f*d)
-                }, p)
-            }
-        }
-        iconCache["$name-$sizePx"] = bmp
-        return bmp
-    }
-
-    // ---------------- Shared view bits ----------------
-
-    private fun dp(v: Float): Int = (v * kav.context().resources.displayMetrics.density).toInt()
-
-    private fun tileBackground(c: Context): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = kav.ui().dp("rTile") * c.resources.displayMetrics.density
-        setColor(kav.ui().color("fill"))
-    }
-
-    // ---------------- The trip card ----------------
-
-    inner class CardPresenter(private val ui: kav.kavapp.api.KavUi, private val c: Context, private val trip: JSONObject) {
-
-        fun view(): View {
-            val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-            box.addView(TextView(c).apply {
-                text = if (hebrew) "מזג האוויר לאורך המסלול" else "Weather along the route"
-                setTextColor(ui.color("text")); textSize = ui.textSize("headline"); typeface = Typeface.DEFAULT_BOLD
-            })
-
-            val loadingBox = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-            box.addView(loadingBox)
-            loadingBox.addView(TextView(c).apply {
-                text = if (hebrew) "טוען תחזית מהמטאורולוגיה…" else "Loading forecast from the IMS…"
-                setTextColor(ui.color("textSecondary")); textSize = ui.textSize("body")
-                setPadding(0, dp(ui.dp("gap2")), 0, 0)
-            })
-            Thread {
-                try {
-                    val items = pickRouteStops(trip).mapNotNull { weatherFor(it) }
-                    main.post {
-                        try { loadingBox.removeAllViews(); fill(loadingBox, items) }
-                        catch (e: Exception) { kav.log("trip card view: $e") }
-                    }
-                } catch (e: Exception) {
-                    kav.log("trip card: $e")
-                }
-            }.start()
-            return ui.card(c, box)
-        }
-
-        private fun fill(box: LinearLayout, items: List<Weather>) {
-            if (items.isEmpty()) {
-                box.addView(TextView(c).apply {
-                    text = if (hebrew) "לא נמצאו תחנות מזג אוויר במסלול זה" else "No weather stations found along this route"
-                    setTextColor(ui.color("textSecondary")); textSize = ui.textSize("body")
-                    setPadding(0, dp(ui.dp("gap2")), 0, 0)
-                })
-                return
-            }
-            box.addView(TextView(c).apply {
-                text = if (hebrew) "לפי השירות המטאורולוגי הישראלי, בשעה שבה תעבור בכל מקום"
-                       else "From the Israel Meteorological Service, at the hour you pass each place"
-                setTextColor(ui.color("textSecondary")); textSize = ui.textSize("caption")
-                setPadding(0, dp(ui.dp("gap2")), 0, dp(ui.dp("gap2")))
-            })
-            val scroll = HorizontalScrollView(c).apply { isHorizontalScrollBarEnabled = false }
-            val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-            for (w in items) {
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.marginEnd = dp(ui.dp("gap3"))
-                row.addView(cityCard(w), lp)
-            }
-            scroll.addView(row)
-            box.addView(scroll, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-
-        /** One city tile on the trip card. */
-        private fun cityCard(w: Weather): View {
-            val card = LinearLayout(c).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(13f), dp(11f), dp(13f), dp(11f))
-                background = tileBackground(c)
-            }
-
-            card.addView(TextView(c).apply {
-                text = w.cityName
-                setTextColor(ui.color("text")); textSize = ui.textSize("subhead"); typeface = Typeface.DEFAULT_BOLD
-            })
-
-            if (w.status != Weather.Status.OK) {
-                card.addView(TextView(c).apply {
-                    text = when (w.status) {
-                        Weather.Status.NO_STATION -> if (hebrew) "אין תחנת חיזוי בקרבת תחנת האוטובוס" else "No nearby IMS forecast station available"
-                        Weather.Status.NETWORK -> if (hebrew) "לא ניתן לאחזר את התחזית (תקשורת)" else "Could not fetch the forecast (no connection)"
-                        else -> if (hebrew) "לא ניתן לאחזר תחזית למועד זה" else "Could not fetch a forecast for this time"
-                    }
-                    setTextColor(ui.color("problem")); textSize = ui.textSize("caption")
-                })
-                if (w.alert != null) {
-                    // Even a tile with no forecast carries the alert sign, colored by severity.
-                    card.addView(TextView(c).apply {
-                        text = (if (hebrew) "התראה: " else "Alert: ") + (if (hebrew) w.alert.titleHe else w.alert.titleEn).take(60)
-                        setTextColor(alertColor(w.alert.severity)); textSize = ui.textSize("caption")
-                    })
-                }
-                return card
-            }
-
-            val iconTemp = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            iconTemp.addView(ImageView(c).apply {
-                setImageBitmap(icon(iconFor(w.code), dp(22f)))
-                // Spoken label for the icon: never leave a picture unlabeled for screen readers.
-                contentDescription = conditionSentence(w)
-                setPadding(0, 0, dp(5f), 0)
-            })
-            iconTemp.addView(TextView(c).apply {
-                text = w.temp + "°"
-                setTextColor(ui.color("text")); textSize = ui.textSize("title"); typeface = Typeface.DEFAULT_BOLD
-            })
-            card.addView(iconTemp)
-
-            card.addView(TextView(c).apply {
-                // Empty description replaced by the spoken condition, never a blank value.
-                text = w.desc.ifEmpty { conditionSentence(w) }
-                setTextColor(ui.color("textSecondary")); textSize = ui.textSize("caption")
-            })
-
-            if (w.rainChance != null && w.rainChance!! > 0) {
-                card.addView(TextView(c).apply {
-                    text = (if (hebrew) "סיכוי לגשם " else "Rain ") + w.rainChance + "%"
-                    setTextColor(ui.color("realtime")); textSize = ui.textSize("caption")
-                })
-            }
-
-            // Tap a tile for the full detail sheet (feels-like, humidity, wind, UV).
-            card.isClickable = true
-            card.isFocusable = true
-            card.setOnClickListener { showDetail(w, c) }
-            dayLabel(w.atSec)?.let { day ->
-                card.addView(TextView(c).apply {
-                    text = day
-                    setTextColor(ui.color("textTertiary")); textSize = ui.textSize("caption")
-                })
-            }
-            w.atText?.let { lbl ->
-                card.addView(TextView(c).apply {
-                    text = if (hebrew) "בשעה $lbl" else "at $lbl"
-                    setTextColor(ui.color("textTertiary")); textSize = ui.textSize("caption")
-                })
-            }
-            if (w.summary) {
-                card.addView(TextView(c).apply {
-                    text = if (hebrew) "תחזית יומית ליום זה" else "Day forecast for that day"
-                    setTextColor(ui.color("textTertiary")); textSize = ui.textSize("caption")
-                })
-            }
-            // An active IMS alert for this stop: wrap in a frame with a severity line on the
-            // leading edge and a red "!" badge on the far corner (top-left in Hebrew, top-right in English).
-            if (w.alert != null) return wrapWithAlertFrame(card, w.alert)
-            return card
-        }
-
-        /** The red "!" badge and severity line used on trip-card tiles with an active
-         * alert. The badge says its meaning aloud too, so a screen reader never hears
-         * just "!".
-         */
-        private fun wrapWithAlertFrame(card: View, a: Alert): View {
-            val frame = FrameLayout(c)
-            frame.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                marginStart = dp(3f)
-            })
-            val sevLine = View(c).apply { setBackgroundColor(alertColor(a.severity)) }
-            frame.addView(sevLine, FrameLayout.LayoutParams(dp(3f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                gravity = if (hebrew) Gravity.END else Gravity.START
-            })
-            val badge = TextView(c).apply {
-                text = "!"
-                gravity = Gravity.CENTER
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = ui.textSize("caption")
-                typeface = Typeface.DEFAULT_BOLD
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(0xFFE53935.toInt())
-                }
-                contentDescription = (if (hebrew) "התראת מזג אוויר פעילה" else "Active weather alert")
-            }
-            val bs = dp(18f)
-            frame.addView(badge, FrameLayout.LayoutParams(bs, bs).apply {
-                gravity = if (hebrew) (Gravity.TOP or Gravity.START) else (Gravity.TOP or Gravity.END)
-                marginStart = dp(2f); marginEnd = dp(2f); topMargin = dp(2f)
-            })
-            return frame
-        }
-    }
-
-    // ---------------- Detail sheet on tap ----------------
-
-    /** Kav's own sheet over the trip's screen: the hour's full detail for one city. */
-    private fun showDetail(w: Weather, c: Context) {
-        val ui = kav.ui()
-        val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-        box.addView(TextView(c).apply {
-            text = w.cityName + (w.atText?.let { " · " + it } ?: "")
-            setTextColor(ui.color("text")); textSize = ui.textSize("headline"); typeface = Typeface.DEFAULT_BOLD
-        })
-        if (w.stopName.isNotEmpty() && w.stopName != w.cityName) {
-            box.addView(TextView(c).apply {
-                text = (if (hebrew) "בתחנה: " else "At stop: ") + w.stopName
-                setTextColor(ui.color("textSecondary")); textSize = ui.textSize("caption")
-            })
-        }
-        val head = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(ImageView(c).apply {
-            setImageBitmap(icon(iconFor(w.code), dp(34f)))
-            contentDescription = if (hebrew) "סמל מזג האוויר" else "Weather icon"
-            setPadding(0,0,dp(8f),0)
-        })
-        head.addView(TextView(c).apply {
-            text = if (w.summary) w.temp + "° (day)" else w.temp + "°"
-            setTextColor(ui.color("text")); textSize = ui.textSize("largeTitle"); typeface = Typeface.DEFAULT_BOLD
-        })
-        box.addView(head)
-        box.addView(TextView(c).apply {
-            // Empty description replaced with a reason, never a blank line.
-            text = w.desc.ifEmpty { (if (hebrew) "אין תיאור לשעה זו" else "No description for this hour") }
-            setTextColor(ui.color("textSecondary")); textSize = ui.textSize("subhead")
-            setPadding(0, 0, 0, dp(ui.dp("gap3")))
-        })
-        // The city's active IMS alert: first two lines above the details; tapping shows all of it.
-        if (w.alert != null) {
-            val alertText = (if (hebrew) w.alert.bodyHe else w.alert.bodyEn).trim().replace("\\s+".toRegex(), " ")
-            val preview = TextView(c).apply {
-                text = alertText
-                setTextColor(alertColor(w.alert.severity))
-                textSize = ui.textSize("body")
-                typeface = Typeface.DEFAULT_BOLD
-                maxLines = 2
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(0, 0, 0, dp(ui.dp("gap1")))
-            }
-            if (hebrew) {
-                preview.textAlignment = TextView.TEXT_ALIGNMENT_VIEW_START
-                preview.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            }
-            preview.setOnClickListener { preview.maxLines = if (preview.maxLines == 2) Integer.MAX_VALUE else 2 }
-            box.addView(preview)
-            val hint = TextView(c).apply {
-                text = if (hebrew) "הקישו להצגת כל ההתראה" else "Tap to see the full alert"
-                setTextColor(ui.color("textTertiary")); textSize = ui.textSize("caption")
-                setPadding(0, 0, 0, dp(ui.dp("gap2")))
-            }
-            if (hebrew) {
-                hint.textAlignment = TextView.TEXT_ALIGNMENT_VIEW_START
-                hint.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            }
-            box.addView(hint)
-        }
-
-        if (w.detail == null) {
-            box.addView(TextView(c).apply {
-                text = if (hebrew) "אין פירוט שעתי לשעה זו; מוצגת התחזית היומית." else "No hourly detail for this hour; showing the day's forecast."
-                setTextColor(ui.color("textTertiary")); textSize = ui.textSize("caption")
-            })
-        } else {
-            for (r in detailRows(w)) box.addView(r)
-        }
-        box.setPadding(dp(4f), dp(4f), dp(4f), dp(ui.dp("gap4")))
-        ui.sheet(c, if (hebrew) "מזג האוויר במקום" else "Weather there", box)
-    }
-
-    private fun detailRows(w: Weather): List<View> {
-        val ui = kav.ui()
-        val c = kav.context()
-        val rows = ArrayList<View>()
-        fun rowRTL(label: String, value: String) {
-            if (value.isEmpty()) return
-            if (hebrew) {
-                // In Hebrew the list reads right to left: label on the right, value on its left.
-                val l = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
-                l.addView(TextView(c).apply {
-                    text = value
-                    setTextColor(ui.color("textSecondary")); textSize = ui.textSize("body")
-                    setPadding(0, 0, dp(ui.dp("gap3")), 0)
-                })
-                l.addView(TextView(c).apply {
-                    text = label
-                    setTextColor(ui.color("text")); textSize = ui.textSize("body"); typeface = Typeface.DEFAULT_BOLD
-                })
-                rows.add(l)
-            } else {
-                rows.add(ui.row(c, null, label, value, null))
-            }
-        }
-        // Every row that IMS did not supply states the reason instead of silently hiding.
-        val missHe = "אין נתון"
-        val missEn = "Not available"
-        fun valueOrMiss(v: String?): String =
-            if (v.isNullOrEmpty()) (if (hebrew) missHe else missEn) else v
-        val fl = w.feelsLike?.ifEmpty { null }
-        rowRTL(if (hebrew) "תחושה" else "Feels like", if (fl != null) "$fl°" else valueOrMiss(fl))
-        rowRTL(if (hebrew) "סיכוי לגשם" else "Rain chance",
-            w.rainChance?.takeIf { it >= 0 }?.let { "$it%" } ?: (if (hebrew) "לא נמסר סיכוי גשם לשעה זו" else "No rain chance given for this hour"))
-        rowRTL(if (hebrew) "לחות" else "Humidity", valueOrMiss(w.humidity).let { if (it == (if (hebrew) missHe else missEn) || w.humidity.isEmpty()) it else "$it%" })
-        rowRTL(if (hebrew) "רוח" else "Wind", w.windSpeed.ifEmpty { if (hebrew) missHe else missEn }
-            .let { if (w.windSpeed.isEmpty()) it else windText(w) })
-        rowRTL(if (hebrew) "משבי רוח" else "Gusts", w.gustSpeed.ifEmpty { if (hebrew) missHe else missEn }
-            .let { if (w.gustSpeed.isEmpty()) it else "$it km/h" })
-        w.uvIndex?.let { rowRTL(if (hebrew) "מדד קרינה" else "UV index", it) }
-        w.uvMax?.let { rowRTL(if (hebrew) "קרינה מקסימלית" else "UV max", it) }
-        rowRTL(if (hebrew) "מקור" else "Source", "ims.gov.il")
-        return rows
-    }
-
-    private fun windText(w: Weather): String {
-        val speed = w.windSpeed
-        if (speed.isEmpty()) return ""
-        val dir = w.windDirId?.let { IMS.windDirectionName(it, hebrew) } ?: ""
-        return if (dir.isEmpty()) "$speed km/h" else "$speed km/h $dir"
-    }
-
-
-
-    // ---------------- The rider's own settings view ----------------
 
     /**
-     * The extension's own settings screen (kav.settingsScreen): a list of the nine
-     * condition kinds, each with a switch to show or hide it and up/down arrows to
-     * move it in the worst-to-best order. The topmost enabled kind is the one the
-     * trip lines speak about; a kind switched off is never mentioned anywhere.
+     * The leave-later hint: when it rains at a place the rider is outside within the next 3 hours, the first later
+     * hour at that place with no rain (and a chance under the threshold), up to 5 hours on. Null when there's none.
+     * Runs on a card thread (it may read a forecast).
      */
-    inner class SettingsScreen(private val ui: kav.kavapp.api.KavUi, private val c: Context) {
-
-        fun view(): View {
-            val outer = ScrollView(c)
-            val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-            outer.addView(box)
-
-            // Full-width cards with the app's own spacing, like every other settings page.
-            val gap = dp(ui.dp("gap3"))
-
-            // The heading card: title plus the explanation of what the order does.
-            val headInner = LinearLayout(c).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(c).apply {
-                    text = if (hebrew) "סדר תנאי מזג האוויר" else "Weather condition order"
-                    setTextColor(ui.color("text")); textSize = ui.textSize("headline"); typeface = Typeface.DEFAULT_BOLD
-                    setPadding(0, 0, 0, dp(ui.dp("gap2")))
-                })
-                addView(TextView(c).apply {
-                    text = if (hebrew)
-                        "הסוג העליון שמופעל הוא הנאמר בשורת התוצאות של הנסיעה. העלו או הורידו כל תנאי לפי מה שחשוב לכם; תנאי שכיביתם לא יוזכר בשום מקום."
-                    else
-                        "The topmost switched-on kind is the one a trip's result line speaks about. Move each condition up or down by what matters to you; a switched-off kind is never mentioned anywhere."
-                    setTextColor(ui.color("textSecondary")); textSize = ui.textSize("subhead")
-                })
-            }
-            box.addView(ui.card(c, headInner), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, gap, 0, gap)
-            })
-
-            // Each kind card, full-width like the heading card.
-            val listBox = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-            box.addView(listBox)
-            redraw(listBox)
-            return outer
-        }
-
-        private fun kindLabel(id: String): String = when (id) {
-            "thunderstorm" -> if (hebrew) "סופת רעמים" else "Thunderstorm"
-            "rain" -> if (hebrew) "גשם" else "Rain"
-            "snow" -> if (hebrew) "שלג" else "Snow"
-            "fog" -> if (hebrew) "ערפל" else "Fog"
-            "heat" -> if (hebrew) "חם" else "Heat"
-            "wind" -> if (hebrew) "רוח" else "Wind"
-            "cloudy" -> if (hebrew) "מעונן" else "Cloudy"
-            "partly" -> if (hebrew) "מעונן חלקית" else "Partly cloudy"
-            "sunny" -> if (hebrew) "שמש" else "Sunny"
-            else -> id
-        }
-
-        private fun redraw(listBox: LinearLayout) {
-            listBox.removeAllViews()
-            var order = kindConfig.order.toMutableList()
-            for ((idx, kind) in order.withIndex()) {
-                fun move(delta: Int) {
-                    val to = idx + delta
-                    if (to < 0 || to >= order.size) return
-                    Collections.swap(order, idx, to)
-                    persistNow(order)
-                    redraw(listBox)
-                }
-                // Each kind in Kav's card box: switch row inside, arrows beside it.
-                // No subtitle: an empty one would shift the label off centre.
-                val inner = LinearLayout(c).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(48f)
-                }
-                inner.addView(ui.switchRow(c, kindLabel(kind), null, kindConfig.isEnabled(kind)) { now ->
-                    val onOff = LinkedHashMap<String, Boolean>()
-                    for (k in kindConfig.order) onOff[k] = if (k == kind) now else kindConfig.isEnabled(k)
-                    persistNow(kindConfig.order, onOff)
-                    redraw(listBox)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                inner.addView(upDownBtn(true) { move(-1) }, LinearLayout.LayoutParams(dp(36f), dp(36f)))
-                inner.addView(upDownBtn(false) { move(+1) }, LinearLayout.LayoutParams(dp(36f), dp(36f)))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.bottomMargin = dp(ui.dp("gap2"))
-                listBox.addView(ui.card(c, inner), lp)
+    fun easeHint(items: List<Weather>): String? {
+        val nowSec = System.currentTimeMillis() / 1000
+        val w = items.firstOrNull { it.status == Weather.Status.OK && it.city != null && kindOf(it).let { k -> k == Kind.RAIN || k == Kind.THUNDERSTORM } }
+            ?: return null
+        if (w.point.time > nowSec + 3 * 3600 || w.point.time < nowSec - 3600) return null
+        if (!kinds.isEnabled(kindOf(w).id)) return null
+        val city = w.city!!
+        val f = forecast(city.lid) ?: return null
+        for ((at, h) in f.hours) {
+            if (at <= w.point.time) continue
+            if (at > w.point.time + 5 * 3600) break
+            val later = fromHour(w.point, city, at, h, false, f.fetchedAt, null)
+            val k = kindOf(later)
+            val chance = later.rainChance
+            if (k != Kind.RAIN && k != Kind.THUNDERSTORM && (chance == null || chance < units.rainMin)) {
+                val place = city.name(hebrew)
+                return t("The rain in $place should ease around ${clock(at)}, so a later trip may keep you dry.",
+                    "הגשם ב$place צפוי להיחלש בסביבות ${clock(at)}, כך שנסיעה מאוחרת יותר עשויה להשאיר אתכם יבשים.")
             }
         }
+        return null
+    }
 
-        private fun upDownBtn(up: Boolean, onClick: Runnable): View =
-            TextView(c).apply {
-                text = if (up) "▲" else "▼"
-                gravity = Gravity.CENTER
-                setTextColor(ui.color("accent"))
-                textSize = ui.textSize("body")
-                isClickable = true; isFocusable = true
-                contentDescription = if (up) (if (hebrew) "העלה" else "Move up") else (if (hebrew) "הורד" else "Move down")
-                setOnClickListener { onClick.run() }
-            }
+    // ---------------- Units, time ----------------
 
-        private fun persistNow(order: List<String>, onOffOverride: Map<String, Boolean>? = null) {
-            val onOff = onOffOverride ?: order.associateWith { k -> kindConfig.isEnabled(k) }
-            saveKinds(order, onOff)
+    fun tempNum(c: Double): Int = Math.round(if (units.celsius) c else c * 9 / 5 + 32).toInt()
+    fun temp(c: Double): String = "${tempNum(c)}°"
+
+    fun tempText(w: Weather): String = when {
+        w.tempC != null -> temp(w.tempC)
+        w.minC != null && w.maxC != null -> "${tempNum(w.minC)}–${tempNum(w.maxC)}°"
+        else -> (w.maxC ?: w.minC)?.let { temp(it) } ?: ""
+    }
+
+    fun speed(kmh: Double): String {
+        val v = Math.round(if (units.kmh) kmh else kmh * 0.621371)
+        return if (units.kmh) "$v ${t("km/h", "קמ״ש")}" else "$v ${t("mph", "מייל לשעה")}"
+    }
+
+    /** A time in Kav's own clock format (Settings › Look and language), so it reads like every other time in Kav. */
+    fun clock(sec: Long): String = SimpleDateFormat(bridge.clockPattern(), Locale.US).format(Date(sec * 1000))
+
+    /** Today, Tomorrow, then the weekday from two days on, then a date from a week on. */
+    fun dayLabel(sec: Long): String {
+        val zone = ZoneId.systemDefault()
+        val d = Instant.ofEpochSecond(sec).atZone(zone).toLocalDate()
+        val diff = ChronoUnit.DAYS.between(LocalDate.now(zone), d)
+        val loc = if (hebrew) Locale("he") else Locale.US
+        return when (diff) {
+            0L -> t("Today", "היום")
+            1L -> t("Tomorrow", "מחר")
+            in 2L..6L -> d.dayOfWeek.getDisplayName(TextStyle.FULL, loc)
+            else -> d.format(DateTimeFormatter.ofPattern(if (hebrew) "d.M" else "d MMM", loc))
         }
     }
 
-    // ---------------- The results-line card ----------------
-
-    /**
-     * The line under each search result: the trip's weather in one sentence — the worst
-     * leg's condition — plus a second line when an IMS alert covers any part of the
-     * route. Loads on a thread, and if there is nothing to say (nothing fetched, kinds
-     * switched off, empty route) the line clears itself — no text, no "by Weather"
-     * residue, nothing taking space.
-     */
-    inner class ResultsLine(private val ui: kav.kavapp.api.KavUi, private val c: Context, private val trip: JSONObject) {
-
-        fun view(): View {
-            val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-            Thread {
-                try {
-                    val items = pickRouteStops(trip).mapNotNull { weatherFor(it) }
-                    main.post {
-                        try { fill(box, items) }
-                        catch (e: Exception) { kav.log("results line view: $e") }
-                    }
-                } catch (e: Exception) {
-                    kav.log("results line: $e")
-                }
-            }.start()
-            return box
-        }
-
-        private fun fill(box: LinearLayout, items: List<Weather>) {
-            box.removeAllViews()
-            if (items.isEmpty()) return
-            val oks = items.filter { it.status == Weather.Status.OK }
-            val alerts = items.mapNotNull { it.alert }.distinctBy { it.regionId }
-            val verdict = tripVerdict(items)
-            if (oks.isNotEmpty() && verdict.isNotEmpty()) {
-                box.addView(TextView(c).apply {
-                    text = verdict
-                    setTextColor(ui.color("text")); textSize = ui.textSize("subhead")
-                })
-            }
-            if (alerts.isNotEmpty()) {
-                box.addView(TextView(c).apply {
-                    text = if (hebrew) "למסלול זה התראות מזג אוויר" else "This route has weather alerts"
-                    setTextColor(alertColor(alerts.minOf { it.severity })); textSize = ui.textSize("subhead")
-                    typeface = Typeface.DEFAULT_BOLD
-                })
-            }
-            // Nothing survived: the box stays empty and the line says nothing.
-        }
+    /** "Updated 40 min ago" for a forecast IMS couldn't refresh; null while it's fresh. */
+    fun staleText(w: Weather): String? {
+        if (w.fetchedAt <= 0) return null
+        val age = System.currentTimeMillis() - w.fetchedAt
+        if (age < FORECAST_TTL_MS + 5 * 60 * 1000) return null
+        val min = age / 60_000
+        return if (min < 60) t("Updated $min min ago", "עודכן לפני $min דקות")
+        else t("Updated ${min / 60} h ago", "עודכן לפני ${min / 60} שעות")
     }
-}
 
-/** One active IMS weather alert for a region, as fetched from ims.gov.il/<lang>/warnings. */
-class Alert(val regionId: Int, val severity: Int, val fromSec: Long, val toSec: Long,
-            val bodyHe: String, val bodyEn: String,
-            val titleHe: String = "", val titleEn: String = "")
+    // ---------------- The trip's map ----------------
 
-/** One weather look along the route: the nearest station (null: none nearby), the bus stop's name, and when the rider passes it. */
-class RouteStop(val city: IMS.City?, val name: String, val time: Long)  // time: seconds since epoch
-
-/** Parsed IMS forecast. */
-class Forecast(val lid: Int, val fetchedAt: Long, val days: Map<String, JSONObject>)  // day key -> {daily, hourly}
-
-class Weather(
-    val lid: Int,
-    val cityName: String,
-    val status: Status,
-    val stopName: String = "",
-    val temp: String = "",
-    val desc: String = "",
-    val rainChance: Int? = null,
-    val atSec: Long = 0,
-    val atText: String? = null,      // the hour label of the matched hourly block, e.g. "14:00"
-    val summary: Boolean = false,     // true when showing a day summary instead of an hour
-    val israelTime: Boolean = true,
-    val detail: JSONObject? = null,  // the matched hourly block, for the detail sheet
-    val feelsLike: String? = null,
-    val humidity: String = "",
-    val windSpeed: String = "",
-    val windDirId: Int? = null,
-    val gustSpeed: String = "",
-    val uvIndex: String? = null,
-    val uvMax: String? = null,
-    val code: Int = 0,
-    val alert: Alert? = null
-) {
-    enum class Status { OK, NETWORK, EMPTY, NO_STATION }
+    /** What each marker on the trip's map shows, for a tap. */
+    val mapItems = ConcurrentHashMap<String, Weather>()
 }

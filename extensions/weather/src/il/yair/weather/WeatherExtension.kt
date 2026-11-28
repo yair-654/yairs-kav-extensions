@@ -351,7 +351,7 @@ class WeatherExtension : KavExtension {
                 return warnings
             }
             for (w in parsed) logOnce(w)
-            warnings = parsed.filter { it.type !in IMS.HIDDEN_TYPES && it.regions.isNotEmpty() }
+            warnings = parsed.filter { !IMS.hidden(it) && it.regions.isNotEmpty() }
             warningsAt = now
             return warnings
         }
@@ -365,7 +365,7 @@ class WeatherExtension : KavExtension {
         if (loggedWarnings.size > 500) loggedWarnings.clear()
         if (!loggedWarnings.add(w.key)) return
         val first = w.textEn.substringBefore(". ").take(100)
-        if (w.type in IMS.HIDDEN_TYPES) { kav.log("IMS warning hidden (type ${w.type}): $first"); return }
+        if (IMS.hidden(w)) { kav.log("IMS warning hidden (type ${w.type}): $first"); return }
         if (w.regions.isEmpty()) kav.log("IMS warning with no region, not shown: $first")
         if (loggedTypes.add(w.type)) {
             kav.log("IMS warning type ${w.type}, severity ${w.severityId}, regions ${w.regions.sorted().joinToString(",")}: " +

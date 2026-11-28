@@ -33,14 +33,29 @@ fun WeatherExtension.isDark(): Boolean {
     return lum < 0.5
 }
 
-/** A warning's color by its level: red, orange, yellow. On a light look, orange and yellow are darkened so text stays readable. */
+/**
+ * A warning's color by its level, in Kav's own warning colors, so they're as calm as Kav's and follow the rider's look
+ * and theme: yellow is Kav's "problem" (amber), red its "critical", and orange halfway between them. Main thread.
+ */
 fun WeatherExtension.warningColor(level: Level): Int {
+    val ui = kav.ui()
     val dark = isDark()
+    val amber = ui.color("problem").takeIf { it != 0 } ?: if (dark) 0xFFE7C17A.toInt() else 0xFF9A6A00.toInt()
+    val red = ui.color("critical").takeIf { it != 0 } ?: if (dark) 0xFFEE929A.toInt() else 0xFFB3424E.toInt()
     return when (level) {
-        Level.RED -> 0xFFE53935.toInt()
-        Level.ORANGE -> if (dark) 0xFFFFA726.toInt() else 0xFFE65100.toInt()
-        Level.YELLOW -> if (dark) 0xFFFDD835.toInt() else 0xFF8D6E00.toInt()
+        Level.RED -> red
+        Level.ORANGE -> Color.rgb((Color.red(amber) + Color.red(red)) / 2, (Color.green(amber) + Color.green(red)) / 2,
+            (Color.blue(amber) + Color.blue(red)) / 2)
+        Level.YELLOW -> amber
     }
+}
+
+/**
+ * A row that takes every tap itself, so a tap on its words counts as a tap on the card: inside Kav's card, a tap on
+ * a child view never reached the card's own listener.
+ */
+class TapRow(c: Context) : LinearLayout(c) {
+    override fun onInterceptTouchEvent(ev: android.view.MotionEvent?): Boolean = isClickable
 }
 
 /** The icon for a place's weather: its kind, with a moon instead of the sun after dark, and Cold as IMS says it. */
@@ -488,7 +503,7 @@ class StopRow(private val ext: WeatherExtension, private val c: Context, private
 
     fun view(): View {
         val ui = ext.kav.ui()
-        val content = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val content = TapRow(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val card = ui.card(c, content)
         val side = ext.pxOf(ui.dp("gap4") - ui.dp("gap1"))
         val frame = FrameLayout(c).apply { setPadding(side, 0, side, 0); visibility = View.GONE; addView(card) }
@@ -527,7 +542,7 @@ class StopRow(private val ext: WeatherExtension, private val c: Context, private
         return null
     }
 
-    private fun fill(frame: View, card: View, row: LinearLayout, w: Weather, rain: Pair<Long, Int>?) {
+    private fun fill(frame: View, card: View, row: TapRow, w: Weather, rain: Pair<Long, Int>?) {
         val ui = ext.kav.ui()
         if (w.status == Weather.Status.OK) {
             row.addView(ImageView(c).apply {
@@ -561,9 +576,12 @@ class StopRow(private val ext: WeatherExtension, private val c: Context, private
         }
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (w.status == Weather.Status.OK || w.warning != null) {
-            card.isClickable = true
+            // The whole card opens the details: its padding (the card) and everything inside it (the row).
+            for (v in listOf(card, row)) {
+                v.isClickable = true
+                v.setOnClickListener { Detail(ext).show(w, c) }
+            }
             card.isFocusable = true
-            card.setOnClickListener { Detail(ext).show(w, c) }
         }
         frame.visibility = View.VISIBLE
     }

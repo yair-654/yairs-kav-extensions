@@ -266,6 +266,14 @@ object IMS {
      */
     val HIDDEN_TYPES = setOf(2, 3, 16, 42)
 
+    private val FOR_PILOTS = Regex("\\b(aircraft|aviation)\\b", RegexOption.IGNORE_CASE)
+
+    /**
+     * Whether riders never see a warning: a hidden type, or one for pilots, by its English words ("AIRCRAFT ICING",
+     * "STRONG WINDS FOR AVIATION"), so a pilots' type IMS adds later is hidden too.
+     */
+    fun hidden(w: Warning): Boolean = w.type in HIDDEN_TYPES || FOR_PILOTS.containsMatchIn(w.textEn)
+
     /**
      * One IMS warning: its land regions, when it holds (seconds), its level and its words in both languages. textEn and
      * textHe are the whole warning, cleaned, without IMS's leading "update:". whatEn and whatHe are its short subject

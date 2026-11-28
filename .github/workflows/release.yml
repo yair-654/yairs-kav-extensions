@@ -1,5 +1,5 @@
 # Builds every extension under extensions/ into one bundle and attaches it to a GitHub Release when a v tag is pushed
-# (git tag v2.0.0 && git push origin v2.0.0). Kav reads the latest release's bundle at its next check.
+# (git tag v2.0.0 && git push origin v2.0.0), or a release made on GitHub's website. Kav reads the latest release's bundle at its next check.
 #
 # It builds with the same tools as a build by hand: JDK 21, Kotlin 2.2.10, Android platform 36 and build tools 36.0.0,
 # and Noam's kit at a fixed commit, so a new kit or a newer Android on GitHub's runner can't change a release by surprise.
@@ -62,6 +62,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The release text comes from RELEASE_NOTES.md when the repository has one, else GitHub lists the commits.
-          if [ -f RELEASE_NOTES.md ]; then notes=(--notes-file RELEASE_NOTES.md); else notes=(--generate-notes); fi
-          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/$BUNDLE" --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # A release made on GitHub's website (which also makes the tag): keep its text, and put the bundle on it,
+            # in place of one already there. Kav takes a release with exactly one .kavb.
+            gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$BUNDLE" --clobber
+          else
+            # A tag pushed on its own: make the release. Its text comes from RELEASE_NOTES.md when the repository has
+            # one, else GitHub lists the commits.
+            if [ -f RELEASE_NOTES.md ]; then notes=(--notes-file RELEASE_NOTES.md); else notes=(--generate-notes); fi
+            gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/$BUNDLE" --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}"
+          fi

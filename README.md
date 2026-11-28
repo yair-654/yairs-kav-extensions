@@ -20,6 +20,7 @@ Requires Kav 5.2 or newer.
 | Extension | What it does |
 |---|---|
 | **Almost Shabbat** | For trips arriving on the afternoon before Shabbat or a holiday: a line under each search result saying how close you'll arrive to candle lighting (or sunset, your choice), a card on the trip's page with candle lighting, sunset and the parsha, a line under navigation's step dots as sunset nears, and, with "Follow your trips" on, a notification if a delay brings your arrival closer. Times are for the locality nearest your destination, and only that locality is sent to Hebcal — never your exact destination. |
+| **Carry Their Light** | On a long bus, train or light rail ride, meet one of Israel's fallen through their sticker from [Drishat Shalom](https://stickers.org.il): a card under navigation's step dots with their name and their words, which opens their full story on Drishat Shalom's own site, inside Kav. With "Follow your trips" on, the hero also waits on Home, with an optional notification 2 minutes in. One hero per trip or one on every long ride, optionally on long waits too; on Yom HaZikaron, every ride of 5 minutes or more. Keep the heroes you met, add a home screen widget with a different hero every day, and add the stickers you see to Drishat Shalom. It talks only to stickers.org.il; your trips and location are never sent anywhere. |
 | **Rush** | In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop. When a run would get you there at least the time you choose sooner (5 minutes unless you change it), a small Rush chip appears under the time and sort of a "leave now" search; tap it and those routes go first, with jogs in amber and runs in red and how much time you'd have to spare. During a trip it can also check before each change whether running gets you on an earlier connection and offer to switch your trip, and when Kav warns you'll miss a change, it says whether a run still makes it. It works only for "leave now" searches without stops on the way. You set your own jogging and running speeds; everything is kept on your phone. |
 | **Soldiers** | For soldiers and reservists: Kav's Pay buttons can open Zuzu instead; your choger or Tzav 8 opens full screen at full brightness for train security, from Home, a home screen widget, or a button over navigation's map at train and light rail stations; and optional stay-awake reminders sound every few minutes of a ride. Everything is kept on your phone — no location, no data sent anywhere. |
 | **Weather** | The weather on your trip, from the Israel Meteorological Service (ims.gov.il): a one-line summary and any IMS warning under each search result, the forecast at each place you get on, off or walk on the trip's page and map, and the weather now at the top of a stop's departures. You choose which conditions matter, in what order, and your units. Only the nearest forecast place is sent to IMS, never your location or route. |
@@ -27,6 +28,7 @@ Requires Kav 5.2 or newer.
 ## Credits
 
 - None of this would've been possible without [Noam](https://github.com/ImNoammm). Thank you Noam for creating [Kav](https://github.com/ImNoammm/Kav), a superb transit app, for opening it up to extensions, and for porting these extensions to Kav's API 5 ([issue #1](https://github.com/yair-654/yairs-kav-extensions/issues/1)), which version 2.0 builds on.
+- [Drishat Shalom](https://stickers.org.il) (דרישת שלום), a project of [HILMA](https://hilma.tech) and [Yad Labanim](https://yadlabanim.org): every hero in Carry Their Light comes from their site, and each story opens on Drishat Shalom's own pages, inside Kav. Visit the site, write to the families, and add the stickers you see.
 - [Hebcal.com](https://www.hebcal.com) — thank you to Hebcal for its free API, which gives Almost Shabbat its candle-lighting and sunset times and the parsha.
 - [Central Bureau of Statistics](https://www.cbs.gov.il) — its list of localities in Israel lets Almost Shabbat find the locality nearest your destination, on your phone.
 - [Israel Meteorological Service (IMS)](https://ims.gov.il) — thanks to the IMS for its free public API, which powers the Weather extension's forecasts.
@@ -44,9 +46,10 @@ These extensions are provided **as is**, without warranty of any kind, express o
 implied, including but not limited to the warranties of merchantability, fitness for
 a particular purpose, and non-infringement.
 
-Forecasts, candle-lighting and sunset times, and other data shown by the extensions come
-from third-party sources (the Israel Meteorological Service, Hebcal.com and others) and
-may be incomplete, delayed, or inaccurate. **Do not rely on them for safety-critical decisions.**
+Forecasts, candle-lighting and sunset times, the heroes' stories, and other data shown by
+the extensions come from third-party sources (the Israel Meteorological Service, Hebcal.com,
+Drishat Shalom and others) and may be incomplete, delayed, or inaccurate. **Do not rely on
+them for safety-critical decisions.**
 
 Weather shows the forecast for the IMS place nearest each stop, which can be a few kilometres
 away, and IMS warnings only for land areas. For official warnings, check ims.gov.il.

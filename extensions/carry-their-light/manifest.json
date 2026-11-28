@@ -1,0 +1,75 @@
+{
+  "format": 1,
+  "name": "carry-their-light",
+  "displayName": "Carry Their Light",
+  "displayNameHe": "נוסעים לאורם",
+  "version": "1.0.0",
+  "release": 1,
+  "minKav": 48,
+  "api": 5,
+  "description": "On long rides, meet one of Israel's fallen heroes through their sticker. Each hero's story opens on Drishat Shalom's own site (stickers.org.il), inside Kav.",
+  "descriptionHe": "בנסיעות ארוכות, הכירו את גיבורי ישראל שנפלו דרך המדבקות שלהם. הסיפור של כל גיבור נפתח באתר של דרישת שלום (stickers.org.il), בתוך Kav.",
+  "icon": "icon.png",
+  "native": { "dex": "classes.dex", "entry": "yair.carrylight.CarryTheirLight" },
+  "adds": ["notifications"],
+  "contributions": [
+    { "id": "follow", "capability": "trips.follow" },
+    { "id": "banner", "capability": "part.nav.banner" },
+    { "id": "home-card", "capability": "part.home.journey" },
+    { "id": "story", "capability": "part.screen.overlay" },
+    { "id": "pages", "capability": "page.provide" },
+    { "id": "widget", "capability": "widget.provide" }
+  ],
+  "pages": [
+    { "id": "met", "title": { "en": "Heroes you met", "he": "הגיבורים שהכרתם" } },
+    { "id": "read", "title": { "en": "Read about a hero", "he": "קריאה על גיבור" } },
+    { "id": "sticker", "title": { "en": "Add a sticker", "he": "הוספת מדבקה" } },
+    { "id": "about", "title": { "en": "About Drishat Shalom", "he": "מידע על דרישת שלום" } }
+  ],
+  "widgets": [
+    {
+      "id": "hero",
+      "size": "wide",
+      "title": { "en": "Carry Their Light widget", "he": "ווידג׳ט נוסעים לאורם" },
+      "description": { "en": "A different hero every day", "he": "בכל יום גיבור אחר" }
+    }
+  ],
+  "settings": [
+    {
+      "key": "minutes", "type": "number", "label": { "en": "Rides of at least", "he": "נסיעות של לפחות" },
+      "min": 5, "max": 90, "step": 5, "default": 15, "unit": { "en": "min", "he": "דק׳" }
+    },
+    {
+      "key": "heroes", "type": "choice", "label": { "en": "Heroes per trip", "he": "גיבורים בכל מסלול" }, "default": "one",
+      "options": [
+        { "value": "one", "label": { "en": "One, on the longest ride", "he": "אחד, בנסיעה הארוכה ביותר" } },
+        { "value": "every", "label": { "en": "On every long ride", "he": "אחד בכל נסיעה ארוכה" } }
+      ]
+    },
+    { "key": "waits", "type": "toggle", "label": { "en": "Also on long waits", "he": "גם בהמתנות ארוכות" }, "default": false },
+    { "key": "notify", "type": "toggle", "label": { "en": "Notification 2 min into the ride", "he": "התראה 2 דקות אחרי העלייה" }, "default": false },
+    {
+      "key": "language", "type": "choice", "label": { "en": "Story language", "he": "שפת הסיפורים" }, "default": "kav",
+      "options": [
+        { "value": "kav", "label": { "en": "Like Kav", "he": "כמו ב-Kav" } },
+        { "value": "en", "label": { "en": "English", "he": "English" } },
+        { "value": "he", "label": { "en": "עברית", "he": "עברית" } }
+      ]
+    }
+  ],
+  "reasons": {
+    "notifications": {
+      "en": "Off unless you turn it on: the hero, 2 minutes into a long ride.",
+      "he": "כבויה אלא אם מפעילים אותה: הגיבור, 2 דקות לתוך נסיעה ארוכה."
+    },
+    "data": {
+      "en": "Your settings and the heroes you met stay on this phone. Your trips and location are never sent anywhere.",
+      "he": "ההגדרות והגיבורים שהכרתם נשמרים רק בטלפון הזה. הנסיעות והמיקום שלכם לא נשלחים לשום מקום."
+    },
+    "native": {
+      "en": "Heroes open on Drishat Shalom's own page, which works like their website: it may use cookies and analytics.",
+      "he": "הגיבורים נפתחים בדף של דרישת שלום, שעובד כמו האתר שלהם: הוא עשוי להשתמש בעוגיות ובכלי ניתוח נתונים."
+    }
+  },
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
+}

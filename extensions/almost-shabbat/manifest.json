@@ -1,0 +1,95 @@
+{
+  "format": 1,
+  "name": "almost-shabbat",
+  "displayName": "Almost Shabbat",
+  "displayNameHe": "כמעט שבת",
+  "version": "2.0.0",
+  "release": 2,
+  "minKav": 48,
+  "api": 5,
+  "description": "On the afternoon before Shabbat or a holiday: how long before candle lighting or sunset your trip arrives. A line under each search result, a card on the trip's page, and, with \"Follow your trips\" on, a notification if a delay makes you later. Times from Hebcal.com for the locality nearest your destination; for privacy, only that locality is sent, never your exact destination. Thank you to Hebcal.com for the free API!",
+  "descriptionHe": "בערב שבת או חג, מהצהריים: כמה זמן לפני הדלקת נרות או השקיעה הנסיעה שלכם מגיעה. שורה מתחת לכל תוצאת חיפוש, כרטיס בעמוד הנסיעה, ואם \"מעקב אחרי הנסיעות שלכם\" מופעל, התראה אם עיכוב מאחר אתכם. הזמנים מ-Hebcal.com לפי היישוב הקרוב ליעד; לשמירה על הפרטיות, רק היישוב נשלח, אף פעם לא היעד המדויק. תודה ל-Hebcal.com על ה-API החינמי!",
+  "icon": "icon.png",
+  "native": {
+    "dex": "classes.dex",
+    "entry": "yair.almostshabbat.AlmostShabbat"
+  },
+  "adds": [
+    "notifications"
+  ],
+  "contributions": [
+    {
+      "id": "line",
+      "capability": "slot.results"
+    },
+    {
+      "id": "card",
+      "capability": "part.trip.summary"
+    },
+    {
+      "id": "banner",
+      "capability": "part.nav.banner"
+    },
+    {
+      "id": "delays",
+      "capability": "trips.follow"
+    }
+  ],
+  "settings": [
+    {
+      "key": "warn",
+      "type": "choice",
+      "label": { "en": "Warn me before", "he": "התרעה לפני" },
+      "default": "candles",
+      "options": [
+        { "value": "candles", "label": { "en": "Candle lighting", "he": "הדלקת נרות" } },
+        { "value": "sunset", "label": { "en": "Sunset", "he": "שקיעה" } }
+      ]
+    },
+    {
+      "key": "parsha-lang",
+      "type": "choice",
+      "label": { "en": "Parsha and holiday names", "he": "שמות פרשה וחג" },
+      "default": "kav",
+      "options": [
+        { "value": "kav", "label": { "en": "Like Kav", "he": "כמו Kav" } },
+        { "value": "he", "label": { "en": "עברית", "he": "עברית" } },
+        { "value": "en", "label": { "en": "English", "he": "English" } }
+      ]
+    },
+    {
+      "key": "place-lang",
+      "type": "choice",
+      "label": { "en": "Locality names", "he": "שמות יישובים" },
+      "default": "kav",
+      "options": [
+        { "value": "kav", "label": { "en": "Like Kav", "he": "כמו Kav" } },
+        { "value": "he", "label": { "en": "עברית", "he": "עברית" } },
+        { "value": "en", "label": { "en": "English", "he": "English" } }
+      ]
+    }
+  ],
+  "reasons": {
+    "slot.results": {
+      "en": "Only for trips arriving on the afternoon before Shabbat or a holiday.",
+      "he": "רק בנסיעות שמגיעות אחר הצהריים בערב שבת או חג."
+    },
+    "parts": {
+      "en": "A card under the trip's summary and a line under navigation's step dots, only on the afternoon before Shabbat or a holiday.",
+      "he": "כרטיס מתחת לסיכום הנסיעה ושורה מתחת לנקודות השלבים בניווט, רק אחר הצהריים בערב שבת או חג."
+    },
+    "trips.follow": {
+      "en": "For the delay notification: Kav's live arrival time during a trip, nothing else.",
+      "he": "בשביל ההתראה על עיכוב: שעת ההגעה העדכנית של Kav בזמן נסיעה, ולא יותר."
+    },
+    "notifications": {
+      "en": "Only when a delay brings your arrival closer to candle lighting or sunset.",
+      "he": "רק כשעיכוב מקרב את שעת ההגעה להדלקת נרות או לשקיעה."
+    },
+    "data": {
+      "en": "Your three settings, and today's times for the localities you searched.",
+      "he": "שלוש ההגדרות שלכם, והזמנים של היום ליישובים שחיפשתם."
+    }
+  },
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues"
+}

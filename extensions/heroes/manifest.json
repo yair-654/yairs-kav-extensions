@@ -1,0 +1,120 @@
+{
+  "format": 1,
+  "name": "heroes",
+  "displayName": "Soldiers",
+  "displayNameHe": "חיילים",
+  "version": "2.0",
+  "release": 9,
+  "minKav": 48,
+  "api": 5,
+  "description": "Pay with Zuzu, show your choger or Tzav 8 at train security, and get stay-awake reminders on your trips.",
+  "descriptionHe": "תשלום בזוזו, הצגת החוגר או הצו 8 בבידוק ברכבת, ותזכורות להישאר ער בנסיעות.",
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues",
+  "icon": "icon.png",
+  "native": {
+    "dex": "classes.dex",
+    "entry": "yair.heroes.Heroes"
+  },
+  "adds": [
+    "notifications",
+    "settings"
+  ],
+  "contributions": [
+    { "id": "card", "capability": "slot.home" },
+    { "id": "zuzu-pay", "capability": "action.pay" },
+    { "id": "trip-end", "capability": "action.trip.end" },
+    { "id": "trip-plan", "capability": "action.nav.plan" },
+    { "id": "banner", "capability": "part.results.time.shift" },
+    { "id": "stay-awake-button", "capability": "part.nav.ride.details" },
+    { "id": "document-button", "capability": "part.screen.overlay" },
+    { "id": "follow", "capability": "trips.follow" },
+    { "id": "widget", "capability": "widget.provide" },
+    { "id": "screens", "capability": "page.provide" }
+  ],
+  "pages": [
+    { "id": "document", "title": { "en": "Choger / Tzav 8", "he": "חוגר / צו 8" }, "entry": false },
+    { "id": "zuzu", "title": { "en": "Zuzu", "he": "זוזו" }, "entry": false }
+  ],
+  "widgets": [
+    {
+      "id": "soldiers",
+      "size": "small",
+      "title": { "en": "Soldiers", "he": "חיילים" },
+      "description": { "en": "Your choger or Tzav 8, and Zuzu, in one tap", "he": "החוגר או הצו 8, וזוזו, בנגיעה אחת" }
+    }
+  ],
+  "settings": [
+    {
+      "key": "zuzu", "type": "toggle", "default": false,
+      "label": { "en": "Pay with Zuzu", "he": "תשלום בזוזו" }
+    },
+    {
+      "key": "doc", "type": "choice", "default": "choger",
+      "label": { "en": "Your document", "he": "המסמך שלכם" },
+      "options": [
+        { "value": "choger", "label": { "en": "Choger", "he": "חוגר" } },
+        { "value": "tzav8", "label": { "en": "Tzav 8", "he": "צו 8" } }
+      ]
+    },
+    {
+      "key": "doc-home", "type": "toggle", "default": true,
+      "label": { "en": "Document button on Home", "he": "כפתור המסמך במסך הבית" }
+    },
+    {
+      "key": "doc-trips", "type": "choice", "default": "stations",
+      "label": { "en": "Document button during trips", "he": "כפתור המסמך בנסיעות" },
+      "options": [
+        { "value": "off", "label": { "en": "Off", "he": "כבוי" } },
+        { "value": "stations", "label": { "en": "At train stations", "he": "בתחנות רכבת" } },
+        { "value": "every", "label": { "en": "Every step", "he": "בכל שלב" } }
+      ]
+    },
+    {
+      "key": "stay-awake", "type": "toggle", "default": false,
+      "label": { "en": "Stay awake button on rides", "he": "כפתור \"להישאר ער\" בנסיעות" }
+    },
+    {
+      "key": "interval", "type": "number", "min": 1, "max": 59, "step": 1, "default": 10,
+      "label": { "en": "Remind me every", "he": "תזכורת כל" },
+      "unit": { "en": "min", "he": "דק׳" }
+    },
+    {
+      "key": "banner", "type": "toggle", "default": false,
+      "label": { "en": "Thank-you banner", "he": "באנר תודה" }
+    }
+  ],
+  "reasons": {
+    "actions": {
+      "en": "Pay opens Zuzu only while Pay with Zuzu is on. Ending a trip or opening its plan only updates your reminders and buttons.",
+      "he": "תשלום פותח את זוזו רק כש\"תשלום בזוזו\" פועל. סיום נסיעה או פתיחת המסלול רק מעדכנים את התזכורות והכפתורים."
+    },
+    "parts": {
+      "en": "The Stay awake button in a ride's card, the document button over navigation's map, and the banner above results.",
+      "he": "כפתור \"להישאר ער\" בכרטיס הנסיעה, כפתור המסמך מעל המפה בניווט, והבאנר מעל התוצאות."
+    },
+    "trips.follow": {
+      "en": "To know which step you're on for the document button, and to stop reminders when a trip ends.",
+      "he": "כדי לדעת באיזה שלב אתם בשביל כפתור המסמך, ולעצור את התזכורות כשהנסיעה נגמרת."
+    },
+    "notifications": {
+      "en": "Only the stay-awake reminders you turn on during a ride.",
+      "he": "רק התזכורות להישאר ער שהפעלת בזמן נסיעה."
+    },
+    "settings": {
+      "en": "Your photo stays only on this phone: never sent anywhere, never in backups.",
+      "he": "התמונה שלכם נשמרת רק בטלפון הזה: לא נשלחת לשום מקום ולא נכללת בגיבויים."
+    },
+    "data": {
+      "en": "Only your choices on this page, kept on this phone.",
+      "he": "רק הבחירות שלכם בעמוד הזה, שמורות בטלפון."
+    },
+    "widget.provide": {
+      "en": "A home screen widget to show your choger or Tzav 8, and to open Zuzu.",
+      "he": "ווידג׳ט למסך הבית להצגת החוגר או הצו 8, ולפתיחת זוזו."
+    },
+    "page.provide": {
+      "en": "The two screens the widget opens: your document, and Zuzu.",
+      "he": "שני המסכים שהווידג׳ט פותח: המסמך שלכם, וזוזו."
+    }
+  }
+}

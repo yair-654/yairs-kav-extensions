@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "name": "rush",
+  "displayName": "Rush",
+  "displayNameHe": "ממהר",
+  "version": "2.0.0",
+  "release": 3,
+  "minKav": 48,
+  "api": 5,
+  "description": "In a hurry? Rush tries to find buses you can still catch if you jog or run to the stop, and during a trip it checks whether running at a change gets you there sooner. It's a gamble: always run safely. Rush works only on searches for leaving now, without stops on the way, and only when Kav itself found routes. It shows only when it finds a run worth it, and adds runs only after you tap it.",
+  "descriptionHe": "ממהרים? ממהר מנסה למצוא אוטובוסים שעוד אפשר לתפוס אם רצים או עושים ריצה קלה לתחנה, ובמהלך נסיעה הוא בודק אם ריצה בהחלפה תביא אתכם מוקדם יותר. זה הימור: רוצו תמיד בזהירות. ממהר עובד רק בחיפוש של יציאה עכשיו, בלי עצירות בדרך, ורק כש־Kav עצמה מצאה מסלולים. הוא מופיע רק כשהוא מוצא ריצה שכדאית, ומוסיף ריצות רק אחרי שמקישים עליו.",
+  "icon": "icon.png",
+  "issues": "https://github.com/yair-654/yairs-kav-extensions/issues",
+  "native": {
+    "dex": "classes.dex",
+    "entry": "yair.rush.Rush"
+  },
+  "adds": [
+    "notifications",
+    "settings"
+  ],
+  "contributions": [
+    { "id": "runs", "capability": "results.add" },
+    { "id": "changes", "capability": "trips.follow" },
+    { "id": "run-line", "capability": "slot.results" },
+    { "id": "chip", "capability": "part.results.options" },
+    { "id": "search-places", "capability": "part.results.endpoints" },
+    { "id": "trip-run", "capability": "part.trip.walk" },
+    { "id": "guide-run", "capability": "part.nav.card" },
+    { "id": "still-make", "capability": "part.nav.problem" }
+  ],
+  "settings": [
+    { "key": "results", "type": "toggle", "label": { "en": "Show Rush in search results", "he": "הצגת ממהר בתוצאות החיפוש" }, "default": true },
+    { "key": "saves", "type": "number", "label": { "en": "Saves at least", "he": "חוסך לפחות" }, "min": 1, "max": 30, "step": 1, "default": 5, "unit": { "en": "min", "he": "דק׳" } },
+    { "key": "tight", "type": "toggle", "label": { "en": "Show tight runs", "he": "הצגת ריצות צמודות" }, "default": false },
+    { "key": "jog-kmh", "type": "number", "label": { "en": "Jogging speed", "he": "מהירות ריצה קלה" }, "min": 5, "max": 12, "step": 0.5, "default": 8, "unit": { "en": "km/h", "he": "קמ״ש" } },
+    { "key": "jog-metres", "type": "number", "label": { "en": "Jog up to", "he": "ריצה קלה עד" }, "min": 100, "max": 2000, "step": 50, "default": 1000, "unit": { "en": "m", "he": "מ׳" } },
+    { "key": "run-kmh", "type": "number", "label": { "en": "Running speed", "he": "מהירות ריצה" }, "min": 6, "max": 20, "step": 0.5, "default": 10, "unit": { "en": "km/h", "he": "קמ״ש" } },
+    { "key": "run-metres", "type": "number", "label": { "en": "Run up to", "he": "ריצה עד" }, "min": 50, "max": 1000, "step": 50, "default": 400, "unit": { "en": "m", "he": "מ׳" } },
+    { "key": "changes", "type": "toggle", "label": { "en": "Run between rides too", "he": "לרוץ גם בין נסיעות" }, "default": false }
+  ],
+  "reasons": {
+    "results.add": {
+      "en": "Routes you can still catch by jogging or running, first in the results, only after you tap Rush.",
+      "he": "מסלולים שעוד אפשר לתפוס בריצה קלה או בריצה, ראשונים בתוצאות, רק אחרי שמקישים על ממהר."
+    },
+    "trips.follow": {
+      "en": "With Run between rides on: to check each change during a trip, and to switch your trip when you tap Switch.",
+      "he": "כש\"לרוץ גם בין נסיעות\" מופעל: כדי לבדוק כל החלפה בנסיעה, ולהחליף את הנסיעה כשמקישים \"החלפה\"."
+    },
+    "slot.results": {
+      "en": "A red or amber line on routes where you'd run or jog, with how much time you'd have to spare.",
+      "he": "שורה אדומה או כתומה על מסלולים שבהם תרוצו, עם כמה זמן רזרבה יישאר."
+    },
+    "parts": {
+      "en": "Rush's chip under the time and sort, runs on a trip's page and in the guide, and a line under a missed-change warning.",
+      "he": "הכפתור של ממהר מתחת לשעה ולמיון, ריצות בעמוד הנסיעה ובהנחיות, ושורה מתחת לאזהרה על החלפה שלא תספיקו."
+    },
+    "notifications": {
+      "en": "Only during a trip, with Run between rides on, when running at a change gets you there sooner.",
+      "he": "רק במהלך נסיעה, כש\"לרוץ גם בין נסיעות\" מופעל, כשריצה בהחלפה תביא אתכם מוקדם יותר."
+    },
+    "data": {
+      "en": "Your speeds and choices, and the runs it planned, kept only on this phone.",
+      "he": "המהירויות וההעדפות שלכם, והריצות שתוכננו, נשמרות רק בטלפון הזה."
+    }
+  }
+}

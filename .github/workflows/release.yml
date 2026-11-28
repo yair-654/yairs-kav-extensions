@@ -1,13 +1,8 @@
-# Builds the bundle of every extension under extensions/ and attaches it to a GitHub Release when a tag is pushed
-# (git tag v1 && git push origin v1). Kav reads the latest release's bundle at its next check.
+# Builds every extension under extensions/ into one bundle and attaches it to a GitHub Release when a v tag is pushed
+# (git tag v2.0.0 && git push origin v2.0.0). Kav reads the latest release's bundle at its next check.
 #
-# The extensions are Kotlin or Java: they need a JDK and the Android SDK, which GitHub's Ubuntu runner has, and the Kotlin
-# compiler, which this downloads. It checks out the Kav extension kit from github.com/ImNoammm/kav-extension-kit beside
-# this repository and runs its kavx (the kit has no dependencies). Until the kit is published there, this workflow
-# fails and the bundle is built and released by hand (README, "Releasing").
-#
-# UNTESTED ON GITHUB: its commands were run by hand on a computer, but it has not run on GitHub yet. Read its first
-# run's log.
+# It builds with the same tools as a build by hand: JDK 21, Kotlin 2.2.10, Android platform 36 and build tools 36.0.0,
+# and Noam's kit at a fixed commit, so a new kit or a newer Android on GitHub's runner can't change a release by surprise.
 name: Release
 
 on:
@@ -17,10 +12,15 @@ on:
 permissions:
   contents: write
 
+env:
+  KIT_COMMIT: 09d55cd738fe6f5a65cc6d6a08f0928405b55d52   # Kav extension kit, 2026-11-28. Move it on when you want a newer kit.
+  KOTLIN_VERSION: 2.2.10
+  BUNDLE: yairs-kav-extensions.kavb
+
 jobs:
   release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,26 +29,39 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ImNoammm/kav-extension-kit
+          ref: ${{ env.KIT_COMMIT }}
           path: kav-extension-kit
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
-      - name: Get the Kotlin compiler
+      - name: Set up Java, Kotlin and the Android SDK
         run: |
-          curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" https://github.com/JetBrains/kotlin/releases/download/v2.2.10/kotlin-compiler-2.2.10.zip
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+
+          curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" "https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip"
           unzip -q "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP"
           echo "KOTLINC=$RUNNER_TEMP/kotlinc/bin/kotlinc" >> "$GITHUB_ENV"
+
+          # The runner has several Android platforms and the kit takes the newest, so give it only these two.
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          mkdir -p "$RUNNER_TEMP/sdk/platforms" "$RUNNER_TEMP/sdk/build-tools"
+          ln -s "$ANDROID_HOME/platforms/android-36" "$RUNNER_TEMP/sdk/platforms/android-36"
+          ln -s "$ANDROID_HOME/build-tools/36.0.0" "$RUNNER_TEMP/sdk/build-tools/36.0.0"
+          echo "ANDROID_HOME=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
 
       - name: Build the bundle
         working-directory: source
         run: |
-          node ../kav-extension-kit/bin/kavx.js bundle . --name "${{ github.event.repository.name }}" --out "$RUNNER_TEMP/${{ github.event.repository.name }}.kavb"
-          node ../kav-extension-kit/bin/kavx.js verify "$RUNNER_TEMP/${{ github.event.repository.name }}.kavb"
+          node ../kav-extension-kit/bin/kavx.js bundle . --name "Yair's extensions" --icon icon.png --out "$RUNNER_TEMP/$BUNDLE"
+          node ../kav-extension-kit/bin/kavx.js verify "$RUNNER_TEMP/$BUNDLE"
 
       - name: Release it
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/${{ github.event.repository.name }}.kavb" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          # The release text comes from RELEASE_NOTES.md when the repository has one, else GitHub lists the commits.
+          if [ -f RELEASE_NOTES.md ]; then notes=(--notes-file RELEASE_NOTES.md); else notes=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/$BUNDLE" --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}"
